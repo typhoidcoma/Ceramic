@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ATOM_STATES, ATOM_TYPES } from "../data/types";
+import type { LayoutMode } from "../layout/layout";
 import { startDataSync } from "../data/sync";
 import { Renderer } from "../gpu/renderer";
 import { AuthGate } from "./auth/AuthGate";
 import { useAuth } from "./auth/useAuth";
-import { AtomStore } from "./store";
+import { AtomStore, buildSeededDemoAtoms } from "./store";
 
 const store = new AtomStore();
 type AppPhase = "loading_session" | "signed_out" | "signed_in_syncing" | "signed_in_ready";
+const LAYOUT_MODES: LayoutMode[] = ["score", "due", "type", "state"];
 
 function useStoreSnapshot() {
   const viewVersion = useSyncExternalStore(
@@ -96,6 +98,11 @@ export function App() {
   const onSignOut = async () => {
     await auth.signOut();
   };
+  const onSeedDemo = () => {
+    store.clear();
+    store.upsertMany(buildSeededDemoAtoms(10000));
+  };
+  const isEmpty = phase === "signed_in_ready" && snapshot.visibleCount === 0;
 
   if (phase === "loading_session") {
     return (
@@ -135,6 +142,19 @@ export function App() {
           <button className="chip" onClick={onSignOut}>
             Sign out
           </button>
+          <button className="chip" onClick={onSeedDemo}>
+            Seed 10k demo
+          </button>
+        </div>
+        <div className="chips">
+          {LAYOUT_MODES.map((mode) => {
+            const active = snapshot.layoutMode === mode;
+            return (
+              <button key={mode} className={`chip ${active ? "active" : ""}`} onClick={() => store.setLayoutMode(mode)}>
+                {mode}
+              </button>
+            );
+          })}
         </div>
         <div className="chips">
           {ATOM_TYPES.map((type) => {
@@ -170,6 +190,17 @@ export function App() {
       </div>
 
       <canvas ref={canvasRef} className="grid-canvas" />
+      {isEmpty && (
+        <div className="empty-state">
+          <h2>No atoms yet</h2>
+          <p className="muted">
+            Your sync is active, but there is no visible data. Seed demo atoms or insert rows into `public.atoms`.
+          </p>
+          <button className="chip" onClick={onSeedDemo}>
+            Seed 10k demo
+          </button>
+        </div>
+      )}
 
       <aside className="inspector">
         <h2>Inspector</h2>

@@ -1,5 +1,5 @@
 import { ATOM_TYPES, type Atom, type AtomPatch, type AtomState, type AtomType, enrichAtom } from "../data/types";
-import { assignGridTargets } from "../layout/layout";
+import { assignGridTargets, type LayoutMode } from "../layout/layout";
 
 export type Filters = {
   types: Set<AtomType>;
@@ -14,6 +14,7 @@ type Snapshot = {
   visibleCount: number;
   fps: number;
   filters: Filters;
+  layoutMode: LayoutMode;
 };
 
 type Listener = () => void;
@@ -29,6 +30,7 @@ export class AtomStore {
   private layoutDirty = true;
   private fps = 0;
   private viewVersion = 0;
+  private layoutMode: LayoutMode = "score";
   private filters: Filters = {
     types: new Set(ATOM_TYPES),
     states: new Set(["new", "active", "snoozed", "done"]),
@@ -53,6 +55,7 @@ export class AtomStore {
       visibleCount: this.getVisibleAtoms().length,
       fps: this.fps,
       filters: this.filters,
+      layoutMode: this.layoutMode,
     };
   }
 
@@ -133,6 +136,13 @@ export class AtomStore {
     this.emit();
   }
 
+  setLayoutMode(layoutMode: LayoutMode): void {
+    if (this.layoutMode === layoutMode) return;
+    this.layoutMode = layoutMode;
+    this.layoutDirty = true;
+    this.emit();
+  }
+
   upsertMany(input: Array<Omit<Atom, "stableKey" | "score" | "sizeTier" | "targetX" | "targetY" | "x" | "y">>): void {
     const now = Date.now();
     for (const item of input) {
@@ -201,7 +211,7 @@ export class AtomStore {
       this.layoutDirty = false;
       return;
     }
-    assignGridTargets(visible, viewportWorldWidth, baseSize);
+    assignGridTargets(visible, viewportWorldWidth, baseSize, this.layoutMode);
     this.layoutDirty = false;
   }
 
@@ -249,6 +259,60 @@ export function buildMockAtoms(count = 20000): Array<Omit<Atom, "stableKey" | "s
       title: `Atom ${i + 1}`,
       preview: `Synthetic atom ${i + 1} for GPU load testing.`,
       payload: { index: i, source: "mock" },
+    };
+  });
+}
+
+function mulberry32(seed: number): () => number {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6d2b79f5;
+    let x = Math.imul(t ^ (t >>> 15), t | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function buildSeededDemoAtoms(
+  count = 10000,
+  seed = 1337,
+): Array<Omit<Atom, "stableKey" | "score" | "sizeTier" | "targetX" | "targetY" | "x" | "y">> {
+  const now = Date.now();
+  const random = mulberry32(seed);
+  const states: AtomState[] = ["new", "active", "snoozed", "done"];
+  const clusterCount = 12;
+  const clusters = Array.from({ length: clusterCount }, (_, i) => ({
+    centerDaysAgo: i * 2,
+    urgencyBias: 0.2 + (i % 4) * 0.18,
+    importanceBias: 0.25 + ((i + 2) % 5) * 0.14,
+  }));
+
+  return Array.from({ length: count }, (_, i) => {
+    const cluster = clusters[i % clusters.length];
+    const ts = now - Math.floor((cluster.centerDaysAgo + random() * 5) * 24 * 60 * 60 * 1000);
+    const dueChance = random();
+    let due: number | undefined;
+    if (dueChance < 0.2) due = now - Math.floor(random() * 3 * 24 * 60 * 60 * 1000);
+    else if (dueChance < 0.72) due = now + Math.floor(random() * 8 * 24 * 60 * 60 * 1000);
+
+    const urgency = Math.max(0, Math.min(1, cluster.urgencyBias + (random() - 0.5) * 0.4));
+    const importance = Math.max(0, Math.min(1, cluster.importanceBias + (random() - 0.5) * 0.45));
+    return {
+      id: `demo-${seed}-${i}`,
+      type: ATOM_TYPES[Math.floor(random() * ATOM_TYPES.length)],
+      state: states[Math.floor(random() * states.length)],
+      ts,
+      due,
+      urgency,
+      importance,
+      title: `Demo Atom ${i + 1}`,
+      preview: `Cluster ${i % clusterCount} with urgency ${urgency.toFixed(2)} and importance ${importance.toFixed(2)}.`,
+      payload: {
+        source: "demo-seed",
+        seed,
+        index: i,
+        cluster: i % clusterCount,
+      },
     };
   });
 }

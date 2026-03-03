@@ -32,6 +32,7 @@ struct VsOut {
   @location(2) flags : u32,
   @location(3) age : f32,
   @location(4) dueDelta : f32,
+  @location(5) urgency : f32,
 };
 
 @group(0) @binding(0) var<uniform> globals : Globals;
@@ -68,7 +69,8 @@ fn vs_main(@builtin(vertex_index) vtx : u32, @builtin(instance_index) inst : u32
   out.color = decode_color(item.color);
   out.flags = item.flags;
   out.age = max(0.0, globals.now - item.t0);
-  out.dueDelta = item.due - globals.now;
+  out.dueDelta = select(1e9, item.due - globals.now, item.due >= 0.0);
+  out.urgency = item.z;
   return out;
 }
 
@@ -87,9 +89,25 @@ fn fs_main(in : VsOut) -> @location(0) vec4f {
     color.rgb *= 0.4;
   }
 
+  let urgencyBoost = smoothstep(0.55, 1.0, in.urgency);
+  color.rgb = mix(color.rgb, color.rgb * 1.25 + vec3f(0.05, 0.02, 0.0), urgencyBoost * 0.35);
+
   if (pulsing) {
-    let pulse = 0.92 + 0.08 * (0.5 + 0.5 * sin(in.age * 1.8));
+    let pulse = 0.9 + 0.1 * (0.5 + 0.5 * sin(globals.now * 4.0));
     color.rgb *= pulse;
+  }
+
+  var dueAccent = vec3f(0.0, 0.0, 0.0);
+  var dueAccentStrength = 0.0;
+  if (in.dueDelta < 0.0) {
+    dueAccent = vec3f(1.0, 0.3, 0.22);
+    dueAccentStrength = 0.95;
+  } else if (in.dueDelta < 86400.0) {
+    dueAccent = vec3f(1.0, 0.72, 0.3);
+    dueAccentStrength = 0.7;
+  } else if (in.dueDelta < 3.0 * 86400.0) {
+    dueAccent = vec3f(0.95, 0.83, 0.46);
+    dueAccentStrength = 0.45;
   }
 
   let edgeDist = min(min(in.uv.x, in.uv.y), min(1.0 - in.uv.x, 1.0 - in.uv.y));
@@ -108,6 +126,7 @@ fn fs_main(in : VsOut) -> @location(0) vec4f {
   }
 
   let border = 1.0 - smoothstep(0.03, 0.06, edgeDist);
+  color.rgb = mix(color.rgb, dueAccent, border * dueAccentStrength);
   color.rgb = mix(color.rgb, outline, border * outlineStrength);
   color.rgb *= edge;
 

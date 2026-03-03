@@ -100,6 +100,26 @@ body,
   touch-action: none;
 }
 
+.empty-state {
+  position: absolute;
+  z-index: 9;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(540px, calc(100% - 24px));
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  padding: 16px;
+  text-align: center;
+  display: grid;
+  gap: 10px;
+}
+
+.empty-state h2 {
+  margin: 0;
+}
+
 .inspector {
   position: absolute;
   top: 0;
