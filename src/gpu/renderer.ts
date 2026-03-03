@@ -441,7 +441,7 @@ export class Renderer {
     const ctx = this.edgeCtx;
     ctx.clearRect(0, 0, this.edgeCanvas.width, this.edgeCanvas.height);
     if (layoutMode === "growth_tree") {
-      this.drawGround(ctx);
+      this.drawLeafBackdrop(ctx);
       this.drawTreeEdges(ctx, visible);
       return;
     }
@@ -464,27 +464,100 @@ export class Renderer {
     return visible;
   }
 
-  private drawGround(ctx: CanvasRenderingContext2D): void {
+  private drawLeafBackdrop(ctx: CanvasRenderingContext2D): void {
     ctx.save();
-    const cx = this.canvas.width * 0.5;
-    const cy = this.canvas.height * 0.86;
-    const rx = Math.min(this.canvas.width * 0.42, 460);
-    const ry = rx * 0.28;
-    const grad = ctx.createRadialGradient(cx, cy - ry * 0.2, 6, cx, cy, rx);
-    grad.addColorStop(0, "rgba(96,188,255,0.20)");
-    grad.addColorStop(1, "rgba(30,88,138,0.00)");
+    const cy = this.canvas.height * 0.5;
+    const leftX = this.canvas.width * 0.06;
+    const rightX = this.canvas.width * 0.94;
+    const length = rightX - leftX;
+    const halfH = Math.min(this.canvas.height * 0.36, 290);
+
+    const grad = ctx.createLinearGradient(leftX, cy, rightX, cy);
+    grad.addColorStop(0, "rgba(56,118,77,0.10)");
+    grad.addColorStop(0.45, "rgba(78,154,98,0.18)");
+    grad.addColorStop(1, "rgba(36,86,56,0.08)");
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.moveTo(leftX, cy);
+    ctx.bezierCurveTo(leftX + length * 0.06, cy - halfH * 0.1, leftX + length * 0.44, cy - halfH, rightX - length * 0.04, cy - halfH * 0.07);
+    ctx.bezierCurveTo(rightX, cy - halfH * 0.02, rightX, cy + halfH * 0.02, rightX - length * 0.04, cy + halfH * 0.07);
+    ctx.bezierCurveTo(leftX + length * 0.44, cy + halfH, leftX + length * 0.06, cy + halfH * 0.1, leftX, cy);
+    ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = "rgba(126,198,255,0.22)";
-    ctx.lineWidth = 1;
-    for (let i = 0; i < 6; i += 1) {
-      const t = i / 5;
+
+    ctx.strokeStyle = "rgba(112,201,132,0.20)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(leftX + 2, cy);
+    ctx.quadraticCurveTo(leftX + length * 0.32, cy + halfH * 0.02, rightX - 2, cy);
+    ctx.stroke();
+
+    const leftEdge: Array<{ x: number; y: number }> = [];
+    const rightEdge: Array<{ x: number; y: number }> = [];
+    const edgeSteps = 70;
+    for (let i = 0; i <= edgeSteps; i += 1) {
+      const t = i / edgeSteps;
+      const x = leftX + t * length * 0.985;
+      const wing = halfH * Math.pow(Math.sin(Math.PI * t), 0.84);
+      const tooth = Math.sin(t * Math.PI * 30 + Math.sin(t * 8) * 0.7) * (3 + 7 * (1 - Math.abs(t - 0.5) * 1.7));
+      leftEdge.push({ x, y: cy - wing - tooth });
+      rightEdge.push({ x, y: cy + wing + tooth });
+    }
+
+    ctx.strokeStyle = "rgba(144,226,160,0.24)";
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    for (let i = 0; i < leftEdge.length; i += 1) {
+      const p = leftEdge[i];
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    for (let i = rightEdge.length - 1; i >= 0; i -= 1) {
+      const p = rightEdge[i];
+      ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+
+    for (let i = 0; i < 7; i += 1) {
+      const t = (i + 1) / 8;
+      const x = leftX + t * length * 0.9;
+      const wing = halfH * Math.pow(Math.sin(Math.PI * t), 0.84);
+      const bend = (0.35 + t * 0.5) * wing;
+
+      ctx.strokeStyle = "rgba(102,186,122,0.11)";
+      ctx.lineWidth = 0.9;
       ctx.beginPath();
-      ctx.ellipse(cx, cy, rx * (0.28 + t * 0.72), ry * (0.28 + t * 0.72), 0, 0, Math.PI * 2);
+      ctx.moveTo(x, cy);
+      ctx.quadraticCurveTo(x - 10 - t * 20, cy - bend * 0.52, x - 16, cy - wing * 0.92);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(x, cy);
+      ctx.quadraticCurveTo(x - 10 - t * 20, cy + bend * 0.52, x - 16, cy + wing * 0.92);
       ctx.stroke();
     }
+
+    for (let i = 0; i < 16; i += 1) {
+      const t = 0.08 + (i / 15) * 0.82;
+      const x = leftX + t * length;
+      const wing = halfH * Math.pow(Math.sin(Math.PI * t), 0.84);
+      const fanLength = wing * (0.52 + ((i % 4) * 0.09));
+      const lift = 6 + t * 18;
+
+      ctx.strokeStyle = "rgba(118,198,136,0.09)";
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(x, cy);
+      ctx.quadraticCurveTo(x - lift, cy - fanLength * 0.5, x - lift * 1.3, cy - fanLength);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(x, cy);
+      ctx.quadraticCurveTo(x - lift, cy + fanLength * 0.5, x - lift * 1.3, cy + fanLength);
+      ctx.stroke();
+    }
+
     ctx.restore();
   }
 
@@ -507,15 +580,19 @@ export class Renderer {
       if (!a || !b) continue;
 
       const focused = focusSet.size === 0 || (focusSet.has(edge.parentId) && focusSet.has(edge.childId));
-      const baseAlpha = focused ? 0.08 : 0.018;
+      const baseAlpha = focused ? 0.095 : 0.025;
       const depth = Math.max(0, Math.min(1, 1 - Math.min(aProj.z, bProj.z) / 1200));
-      const alpha = baseAlpha + edge.strength * 0.17 * depth;
-      const width = (a.treeRole === "trunk" || b.treeRole === "trunk" ? 1.8 : 0.9) * (0.45 + depth);
-      ctx.strokeStyle = a.treeRole === "trunk" || b.treeRole === "trunk" ? `rgba(178,136,92,${alpha})` : `rgba(106,206,168,${alpha})`;
+      const alpha = baseAlpha + edge.strength * 0.22 * depth;
+      const width = (a.treeRole === "trunk" || b.treeRole === "trunk" ? 2.3 : 1.1) * (0.44 + depth);
+      ctx.strokeStyle =
+        a.treeRole === "trunk" || b.treeRole === "trunk" ? `rgba(118,176,98,${alpha})` : `rgba(132,224,154,${alpha})`;
       ctx.lineWidth = width;
 
-      const midX = (aProj.screenX + bProj.screenX) * 0.5;
-      const midY = (aProj.screenY + bProj.screenY) * 0.5 - 10 - Math.abs(aProj.screenX - bProj.screenX) * 0.03;
+      const midX0 = (aProj.screenX + bProj.screenX) * 0.5;
+      const midY0 = (aProj.screenY + bProj.screenY) * 0.5;
+      const toMidribY = this.canvas.height * 0.5 - midY0;
+      const midX = midX0 - 6 - Math.abs(toMidribY) * 0.03 - Math.abs(aProj.screenX - bProj.screenX) * 0.14;
+      const midY = midY0 + toMidribY * 0.24;
       ctx.beginPath();
       ctx.moveTo(aProj.screenX, aProj.screenY);
       ctx.quadraticCurveTo(midX, midY, bProj.screenX, bProj.screenY);

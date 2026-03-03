@@ -336,12 +336,11 @@ function layoutGrowthTreeMode(
   const rootCount = Math.max(2, Math.min(12, Math.floor(Math.sqrt(n) * 0.18)));
   const childCountById = new Map<string, number>();
   const edges: TreeEdge[] = [];
-  const indexById = new Map<string, number>();
-  for (let i = 0; i < ordered.length; i += 1) indexById.set(ordered[i].id, i);
 
-  const maxHeight = Math.max(360, Math.min(760, viewportWorldHeight * 0.78));
-  const baseRadius = Math.max(24, Math.min(58, baseSize * 2.2));
-  const canopyRadius = Math.max(180, Math.min(560, viewportWorldWidth * 0.34));
+  const leafLength = Math.max(420, Math.min(1100, viewportWorldWidth * 0.92));
+  const leafHalfHeight = Math.max(150, Math.min(420, viewportWorldHeight * 0.42));
+  const stemX = -leafLength * 0.5;
+  const camberDepth = Math.max(34, Math.min(140, viewportWorldHeight * 0.12));
 
   const parentById = new Map<string, Atom | undefined>();
   const hintsById = new Map<string, GrowthHints>();
@@ -406,54 +405,46 @@ function layoutGrowthTreeMode(
     atom.treeRole = roleForDepth(atom.treeDepth, childCount);
 
     if (!parent) {
-      const rootAngle = i * (Math.PI * 2 / rootCount);
-      const petal = 0.66 + 0.22 * Math.sin(rootAngle * 2.3);
-      atom.targetX = Math.cos(rootAngle) * baseRadius * petal;
-      atom.targetY = maxHeight * 0.02 + Math.sin(rootAngle * 1.4) * 12;
-      atom.targetZ = Math.sin(rootAngle) * baseRadius * petal;
-      atom.renderSize = tileSizeForTier(baseSize, atom.sizeTier) * 0.86;
+      const t = rootCount <= 1 ? 0 : i / (rootCount - 1);
+      const spread = (t - 0.5) * Math.min(80, leafHalfHeight * 0.24);
+      atom.targetX = stemX + 12 + t * 26;
+      atom.targetY = spread + Math.sin(t * Math.PI * 2) * 8;
+      atom.targetZ = -Math.abs(spread) * 0.22;
+      atom.renderSize = tileSizeForTier(baseSize, atom.sizeTier) * 0.94;
       applyInitialPosition(atom);
       continue;
     }
 
     const pDepth = parent.treeDepth;
     const depthDelta = Math.max(0.02, atom.treeDepth - pDepth);
-    const typeSector = (TYPE_ORDER[atom.type] ?? 0) / 8;
     const h0 = randomStable01(atom.stableKey);
     const h1 = randomStable01(atom.stableKey ^ parent.stableKey);
     const relationInfluence = clamp01((relationByChildId.get(atom.id) ?? 0) * 0.65);
-    const localAngle =
-      GOLDEN_ANGLE * (indexById.get(atom.id) ?? i) * (0.92 - relationInfluence * 0.24) +
-      typeSector * Math.PI * 2 +
-      h0 * 0.4 +
-      Math.sin(atom.treeDepth * 8 + h1 * 6) * 0.34;
-    const radial = baseRadius + canopyRadius * Math.pow(atom.treeDepth, 1.18);
-    const step = 12 + 34 * depthDelta + 14 * h1;
-    const branchLift = 9 + Math.pow(depthDelta + 0.04, 0.68) * maxHeight * 0.24;
-    const sway = Math.sin(localAngle * 0.65 + h0 * 4.5) * (8 + atom.treeDepth * 22);
+    const localAngle = GOLDEN_ANGLE * i + h0 * 0.6 + Math.sin(atom.treeDepth * 10 + h1 * 7) * 0.25;
+    const depth = clamp01(atom.treeDepth);
+    const envelope = Math.pow(Math.sin(Math.PI * depth), 0.74);
+    const halfHeightAtDepth = Math.max(20, leafHalfHeight * envelope);
+    const midribY = Math.sin(depth * 3.2 + h1 * 4.1) * leafHalfHeight * 0.08 * (1 - depth);
+    const side = h0 < 0.5 ? -1 : 1;
+    const depthReach = clamp01(depthDelta * 7.5);
+    const veinReach = halfHeightAtDepth * (0.24 + 0.62 * h0);
+    const lateral = side * veinReach * (0.26 + depthReach * 0.74) * (0.82 - relationInfluence * 0.24);
+    const yGoal = midribY + lateral;
 
-    atom.targetX =
-      parent.targetX * (0.56 + atom.treeDepth * 0.42) +
-      Math.cos(localAngle) * (step + radial * (0.19 + relationInfluence * 0.1)) +
-      sway * 0.42;
-    atom.targetZ =
-      parent.targetZ * (0.56 + atom.treeDepth * 0.42) +
-      Math.sin(localAngle) * (step + radial * (0.19 + relationInfluence * 0.1)) -
-      sway * 0.28;
-    const remainingHeadroom = Math.max(22, maxHeight - parent.targetY);
-    const headroomFactor = clamp01(remainingHeadroom / (maxHeight * 0.42));
-    const dampedLift = branchLift * (0.28 + headroomFactor * 0.72);
-    const layeredY =
-      maxHeight * (0.05 + Math.pow(atom.treeDepth, 1.18) * 0.88) +
-      (h0 - 0.5) * maxHeight * 0.06 +
-      Math.sin(localAngle * 0.8 + h1 * 2.1) * (4 + 10 * atom.treeDepth);
-    const branchY = parent.targetY + dampedLift + Math.sin(localAngle * 0.55 + h0 * 3.1) * (2 + 5 * atom.treeDepth);
-    atom.targetY = Math.max(parent.targetY + 4, Math.min(maxHeight * 0.985, branchY * 0.46 + layeredY * 0.54));
+    const xBase = stemX + depth * leafLength;
+    const xCurve = Math.sin(localAngle * 0.7 + h1 * 2.3) * (3 + 8 * depth) + (h1 - 0.5) * 11;
+    atom.targetX = Math.max(parent.targetX + 2, xBase + xCurve);
+
+    atom.targetY = parent.targetY * 0.34 + yGoal * 0.66 + Math.sin(localAngle) * (4 + 8 * depth);
+    if (atom.targetY > halfHeightAtDepth * 0.98) atom.targetY = halfHeightAtDepth * 0.98;
+    else if (atom.targetY < -halfHeightAtDepth * 0.98) atom.targetY = -halfHeightAtDepth * 0.98;
+
+    atom.targetZ = -Math.pow(Math.abs(atom.targetY) / halfHeightAtDepth, 1.36) * camberDepth + (h1 - 0.5) * 14;
 
     let size = tileSizeForTier(baseSize, atom.sizeTier);
-    if (atom.treeRole === "trunk") size *= 1.18;
-    else if (atom.treeRole === "branch") size *= 0.96;
-    else size *= 0.74 + atom.score * 0.5;
+    if (atom.treeRole === "trunk") size *= 1.06;
+    else if (atom.treeRole === "branch") size *= 0.92;
+    else size *= 0.68 + atom.score * 0.44;
     atom.renderSize = Math.max(7, size);
     applyInitialPosition(atom);
     edges.push({
@@ -483,7 +474,7 @@ function layoutGrowthTreeMode(
       trunkCount,
       branchCount,
       leafCount,
-      maxDepth: maxHeight,
+      maxDepth: leafLength,
     },
   };
 }

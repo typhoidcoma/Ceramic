@@ -219,7 +219,7 @@ export function App() {
             </button>
           ))}
         </div>
-        <span className="status">Life Tree only: left drag orbit, right-drag/shift pan, wheel dolly</span>
+        <span className="status">Giant Leaf mode: left drag orbit, right-drag/shift pan, wheel dolly</span>
         {phase === "signed_in_syncing" && <span className="status">Syncing...</span>}
         {syncError && <span className="status error">Sync error: {syncError}</span>}
         <span className="status">phase: {phase}</span>
