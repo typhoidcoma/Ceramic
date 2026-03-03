@@ -21,10 +21,33 @@ function similarity(a: Atom, b: Atom): number {
   return clamp01(1 - 0.45 * urgencyDelta - 0.35 * importanceDelta + stateMatch + typeMatch);
 }
 
+type RelationPayload = {
+  relatesTo?: string;
+  threadId?: string;
+};
+
+function readRelationPayload(atom: Atom): RelationPayload {
+  if (!atom.payload || typeof atom.payload !== "object") return {};
+  const payload = atom.payload as Record<string, unknown>;
+  const relatesTo = typeof payload.relatesTo === "string" ? payload.relatesTo : undefined;
+  const threadId = typeof payload.threadId === "string" ? payload.threadId : undefined;
+  return { relatesTo, threadId };
+}
+
 export function buildConstellationConnections(atoms: Atom[], maxEdges = 9000): AtomConnection[] {
   if (atoms.length < 2) return [];
   const edgeMap = new Map<string, AtomConnection>();
   const byTime = [...atoms].sort((a, b) => a.ts - b.ts);
+  const byId = new Map<string, Atom>();
+  const byThread = new Map<string, Atom[]>();
+  for (const atom of atoms) {
+    byId.set(atom.id, atom);
+    const relation = readRelationPayload(atom);
+    if (!relation.threadId) continue;
+    const bucket = byThread.get(relation.threadId);
+    if (bucket) bucket.push(atom);
+    else byThread.set(relation.threadId, [atom]);
+  }
 
   const addEdge = (a: Atom, b: Atom, strength: number, kind: "time" | "likeness"): void => {
     if (a.id === b.id) return;
@@ -72,6 +95,24 @@ export function buildConstellationConnections(atoms: Atom[], maxEdges = 9000): A
         if (!neighbor) break;
         addEdge(atom, neighbor, similarity(atom, neighbor), "likeness");
       }
+    }
+  }
+
+  for (const atom of atoms) {
+    const relation = readRelationPayload(atom);
+    if (!relation.relatesTo) continue;
+    const target = byId.get(relation.relatesTo);
+    if (!target) continue;
+    addEdge(atom, target, 0.86, "likeness");
+  }
+
+  for (const bucket of byThread.values()) {
+    bucket.sort((a, b) => a.ts - b.ts);
+    for (let i = 1; i < bucket.length; i += 1) {
+      const prev = bucket[i - 1];
+      const current = bucket[i];
+      const dtDays = Math.abs(current.ts - prev.ts) / (1000 * 60 * 60 * 24);
+      addEdge(current, prev, 0.52 + 0.32 * (1 - clamp01(dtDays / 7)), "likeness");
     }
   }
 

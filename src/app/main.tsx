@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ATOM_STATES, ATOM_TYPES } from "../data/types";
-import type { LayoutMode } from "../layout/layout";
 import { startDataSync } from "../data/sync";
 import { Renderer } from "../gpu/renderer";
 import { AuthGate } from "./auth/AuthGate";
@@ -9,7 +8,6 @@ import { AtomStore, buildSeededDemoAtoms } from "./store";
 
 const store = new AtomStore();
 type AppPhase = "loading_session" | "signed_out" | "signed_in_syncing" | "signed_in_ready";
-const LAYOUT_MODES: LayoutMode[] = ["growth_tree", "score", "constellation", "due", "type", "state"];
 
 function useStoreSnapshot() {
   const viewVersion = useSyncExternalStore(
@@ -30,6 +28,10 @@ export function App() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [rendererError, setRendererError] = useState<string | null>(null);
   const isSignedInView = phase === "signed_in_syncing" || phase === "signed_in_ready";
+
+  useEffect(() => {
+    store.setLayoutMode("growth_tree");
+  }, []);
 
   useEffect(() => {
     if (!isSignedInView) {
@@ -118,14 +120,7 @@ export function App() {
   };
   const isEmpty = phase === "signed_in_ready" && snapshot.visibleCount === 0;
   const overlayPanels = snapshot.panelLayouts;
-  const activePanelLabel = overlayPanels.find((panel) => panel.rank === snapshot.activePanelRank)?.label ?? "-";
   const cssScale = 1 / (window.devicePixelRatio || 1);
-
-  useEffect(() => {
-    if (snapshot.layoutMode !== "score") {
-      rendererRef.current?.resetView();
-    }
-  }, [snapshot.layoutMode]);
 
   if (phase === "loading_session") {
     return (
@@ -173,16 +168,6 @@ export function App() {
           </button>
         </div>
         <div className="chips">
-          {LAYOUT_MODES.map((mode) => {
-            const active = snapshot.layoutMode === mode;
-            return (
-              <button key={mode} className={`chip ${active ? "active" : ""}`} onClick={() => store.setLayoutMode(mode)}>
-                {mode}
-              </button>
-            );
-          })}
-        </div>
-        <div className="chips">
           {ATOM_TYPES.map((type) => {
             const active = snapshot.filters.types.has(type);
             return (
@@ -210,41 +195,31 @@ export function App() {
           value={snapshot.filters.query}
           onChange={(event) => store.setQuery(event.target.value)}
         />
-        {snapshot.layoutMode !== "score" && snapshot.layoutMode !== "constellation" && snapshot.layoutMode !== "growth_tree" && (
-          <span className="status">Grouped: click panel to focus, wheel to zoom panel, double-click reset</span>
-        )}
-        {snapshot.layoutMode === "growth_tree" && (
-          <>
-            <button className={`chip ${snapshot.growthPlaying ? "active" : ""}`} onClick={onToggleGrowth}>
-              {snapshot.growthPlaying ? "Pause Growth" : "Play Growth"}
+        <button className={`chip ${snapshot.growthPlaying ? "active" : ""}`} onClick={onToggleGrowth}>
+          {snapshot.growthPlaying ? "Pause Growth" : "Play Growth"}
+        </button>
+        <button className="chip" onClick={onRestartGrowth}>
+          Restart Growth
+        </button>
+        <div className="chips">
+          {(["slow", "normal", "fast"] as const).map((speed) => (
+            <button
+              key={speed}
+              className={`chip ${snapshot.growthSpeed === speed ? "active" : ""}`}
+              onClick={() => store.setGrowthSpeed(speed)}
+            >
+              {speed}
             </button>
-            <button className="chip" onClick={onRestartGrowth}>
-              Restart Growth
+          ))}
+        </div>
+        <div className="chips">
+          {(["off", "selected"] as const).map((mode) => (
+            <button key={mode} className={`chip ${snapshot.focusMode === mode ? "active" : ""}`} onClick={() => store.setFocusMode(mode)}>
+              focus {mode}
             </button>
-            <div className="chips">
-              {(["slow", "normal", "fast"] as const).map((speed) => (
-                <button
-                  key={speed}
-                  className={`chip ${snapshot.growthSpeed === speed ? "active" : ""}`}
-                  onClick={() => store.setGrowthSpeed(speed)}
-                >
-                  {speed}
-                </button>
-              ))}
-            </div>
-            <div className="chips">
-              {(["off", "selected"] as const).map((mode) => (
-                <button key={mode} className={`chip ${snapshot.focusMode === mode ? "active" : ""}`} onClick={() => store.setFocusMode(mode)}>
-                  focus {mode}
-                </button>
-              ))}
-            </div>
-            <span className="status">Life Tree: left drag orbit, right-drag/shift pan, wheel dolly</span>
-          </>
-        )}
-        {snapshot.layoutMode === "constellation" && (
-          <span className="status">Constellation: drag to pan, wheel to zoom, blue links=time, amber=likeness</span>
-        )}
+          ))}
+        </div>
+        <span className="status">Life Tree only: left drag orbit, right-drag/shift pan, wheel dolly</span>
         {phase === "signed_in_syncing" && <span className="status">Syncing...</span>}
         {syncError && <span className="status error">Sync error: {syncError}</span>}
         <span className="status">phase: {phase}</span>
@@ -334,7 +309,6 @@ export function App() {
         <div>growth: {(snapshot.growthTime * 100).toFixed(0)}%</div>
         <div>focus: {snapshot.focusId ?? "-"}</div>
         <div>hovered: {snapshot.hoveredId ?? "-"}</div>
-        <div>active panel: {activePanelLabel}</div>
       </div>
     </div>
   );

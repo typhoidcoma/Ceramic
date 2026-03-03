@@ -281,6 +281,38 @@ function similarity(a: Atom, b: Atom): number {
   return 0.48 * urgency + 0.3 * importance + 0.14 * type + 0.08 * state;
 }
 
+type GrowthHints = {
+  relatesTo?: string;
+  threadId?: string;
+  personId?: string;
+  projectId?: string;
+  phase?: number;
+};
+
+function readGrowthHints(atom: Atom): GrowthHints {
+  if (!atom.payload || typeof atom.payload !== "object") return {};
+  const payload = atom.payload as Record<string, unknown>;
+  const relatesTo = typeof payload.relatesTo === "string" ? payload.relatesTo : undefined;
+  const threadId = typeof payload.threadId === "string" ? payload.threadId : undefined;
+  const personId = typeof payload.personId === "string" ? payload.personId : undefined;
+  const projectId = typeof payload.projectId === "string" ? payload.projectId : undefined;
+  const phase = typeof payload.phase === "number" && Number.isFinite(payload.phase) ? payload.phase : undefined;
+  return { relatesTo, threadId, personId, projectId, phase };
+}
+
+function relationAffinity(atom: GrowthHints, candidate: GrowthHints, candidateId: string): number {
+  let score = 0;
+  if (atom.relatesTo && atom.relatesTo === candidateId) score += 1.2;
+  if (atom.threadId && candidate.threadId && atom.threadId === candidate.threadId) score += 0.3;
+  if (atom.personId && candidate.personId && atom.personId === candidate.personId) score += 0.16;
+  if (atom.projectId && candidate.projectId && atom.projectId === candidate.projectId) score += 0.14;
+  if (atom.phase !== undefined && candidate.phase !== undefined) {
+    const phaseDelta = Math.abs(atom.phase - candidate.phase);
+    score += Math.max(0, 0.14 - phaseDelta * 0.03);
+  }
+  return score;
+}
+
 function roleForDepth(depth: number, childCount: number): "trunk" | "branch" | "leaf" {
   if (depth <= 0.15 || childCount >= 6) return "trunk";
   if (depth >= 0.72 || childCount === 0) return "leaf";
@@ -312,8 +344,12 @@ function layoutGrowthTreeMode(
   const canopyRadius = Math.max(180, Math.min(560, viewportWorldWidth * 0.34));
 
   const parentById = new Map<string, Atom | undefined>();
+  const hintsById = new Map<string, GrowthHints>();
+  const relationByChildId = new Map<string, number>();
+  for (const atom of ordered) hintsById.set(atom.id, readGrowthHints(atom));
   for (let i = 0; i < ordered.length; i += 1) {
     const atom = ordered[i];
+    const atomHints = hintsById.get(atom.id) ?? {};
     const depth = n <= 1 ? 0 : i / (n - 1);
     atom.treeDepth = depth;
     atom.growthPhase = 1;
@@ -321,29 +357,35 @@ function layoutGrowthTreeMode(
 
     if (i < rootCount) {
       parentById.set(atom.id, undefined);
+      relationByChildId.set(atom.id, 0);
       continue;
     }
 
     const lowerDepthFloor = Math.max(0, depth - 0.18);
     let bestParent: Atom | null = null;
     let bestScore = Number.NEGATIVE_INFINITY;
+    let bestRelation = 0;
     const start = Math.max(0, i - 260);
     for (let c = start; c < i; c += 1) {
       const candidate = ordered[c];
       if (candidate.treeDepth < lowerDepthFloor) continue;
+      const candidateHints = hintsById.get(candidate.id) ?? {};
       const dtDays = Math.abs(atom.ts - candidate.ts) / DAY_MS;
       const timeScore = 1 - clamp01(dtDays / 21);
       const likeScore = similarity(atom, candidate);
+      const relationScore = relationAffinity(atomHints, candidateHints, candidate.id);
       const continuityPenalty = (childCountById.get(candidate.id) ?? 0) * 0.07;
-      const score = timeScore * 0.45 + likeScore * 0.55 - continuityPenalty;
+      const score = timeScore * 0.33 + likeScore * 0.42 + relationScore - continuityPenalty;
       if (score > bestScore || (Math.abs(score - bestScore) < 0.00001 && candidate.stableKey < (bestParent?.stableKey ?? Number.MAX_SAFE_INTEGER))) {
         bestScore = score;
         bestParent = candidate;
+        bestRelation = relationScore;
       }
     }
 
     parentById.set(atom.id, bestParent ?? ordered[Math.max(0, i - 1)]);
     const parent = parentById.get(atom.id);
+    relationByChildId.set(atom.id, bestRelation);
     if (parent) childCountById.set(parent.id, (childCountById.get(parent.id) ?? 0) + 1);
   }
 
@@ -365,9 +407,10 @@ function layoutGrowthTreeMode(
 
     if (!parent) {
       const rootAngle = i * (Math.PI * 2 / rootCount);
-      atom.targetX = Math.cos(rootAngle) * baseRadius * 0.72;
-      atom.targetY = maxHeight * 0.02 + (i % 3) * 8;
-      atom.targetZ = Math.sin(rootAngle) * baseRadius * 0.72;
+      const petal = 0.66 + 0.22 * Math.sin(rootAngle * 2.3);
+      atom.targetX = Math.cos(rootAngle) * baseRadius * petal;
+      atom.targetY = maxHeight * 0.02 + Math.sin(rootAngle * 1.4) * 12;
+      atom.targetZ = Math.sin(rootAngle) * baseRadius * petal;
       atom.renderSize = tileSizeForTier(baseSize, atom.sizeTier) * 0.86;
       applyInitialPosition(atom);
       continue;
@@ -378,14 +421,34 @@ function layoutGrowthTreeMode(
     const typeSector = (TYPE_ORDER[atom.type] ?? 0) / 8;
     const h0 = randomStable01(atom.stableKey);
     const h1 = randomStable01(atom.stableKey ^ parent.stableKey);
-    const localAngle = GOLDEN_ANGLE * (indexById.get(atom.id) ?? i) + typeSector * Math.PI * 2 + h0 * 0.4;
+    const relationInfluence = clamp01((relationByChildId.get(atom.id) ?? 0) * 0.65);
+    const localAngle =
+      GOLDEN_ANGLE * (indexById.get(atom.id) ?? i) * (0.92 - relationInfluence * 0.24) +
+      typeSector * Math.PI * 2 +
+      h0 * 0.4 +
+      Math.sin(atom.treeDepth * 8 + h1 * 6) * 0.34;
     const radial = baseRadius + canopyRadius * Math.pow(atom.treeDepth, 1.18);
-    const step = 14 + 36 * depthDelta + 16 * h1;
-    const branchLift = 12 + Math.pow(depthDelta + 0.04, 0.7) * maxHeight * 0.32;
+    const step = 12 + 34 * depthDelta + 14 * h1;
+    const branchLift = 9 + Math.pow(depthDelta + 0.04, 0.68) * maxHeight * 0.24;
+    const sway = Math.sin(localAngle * 0.65 + h0 * 4.5) * (8 + atom.treeDepth * 22);
 
-    atom.targetX = parent.targetX * (0.56 + atom.treeDepth * 0.42) + Math.cos(localAngle) * (step + radial * 0.23);
-    atom.targetZ = parent.targetZ * (0.56 + atom.treeDepth * 0.42) + Math.sin(localAngle) * (step + radial * 0.23);
-    atom.targetY = Math.min(maxHeight, parent.targetY + branchLift);
+    atom.targetX =
+      parent.targetX * (0.56 + atom.treeDepth * 0.42) +
+      Math.cos(localAngle) * (step + radial * (0.19 + relationInfluence * 0.1)) +
+      sway * 0.42;
+    atom.targetZ =
+      parent.targetZ * (0.56 + atom.treeDepth * 0.42) +
+      Math.sin(localAngle) * (step + radial * (0.19 + relationInfluence * 0.1)) -
+      sway * 0.28;
+    const remainingHeadroom = Math.max(22, maxHeight - parent.targetY);
+    const headroomFactor = clamp01(remainingHeadroom / (maxHeight * 0.42));
+    const dampedLift = branchLift * (0.28 + headroomFactor * 0.72);
+    const layeredY =
+      maxHeight * (0.05 + Math.pow(atom.treeDepth, 1.18) * 0.88) +
+      (h0 - 0.5) * maxHeight * 0.06 +
+      Math.sin(localAngle * 0.8 + h1 * 2.1) * (4 + 10 * atom.treeDepth);
+    const branchY = parent.targetY + dampedLift + Math.sin(localAngle * 0.55 + h0 * 3.1) * (2 + 5 * atom.treeDepth);
+    atom.targetY = Math.max(parent.targetY + 4, Math.min(maxHeight * 0.985, branchY * 0.46 + layeredY * 0.54));
 
     let size = tileSizeForTier(baseSize, atom.sizeTier);
     if (atom.treeRole === "trunk") size *= 1.18;
@@ -396,7 +459,12 @@ function layoutGrowthTreeMode(
     edges.push({
       parentId: parent.id,
       childId: atom.id,
-      strength: clamp01(0.25 + 0.55 * similarity(atom, parent) + 0.2 * (1 - atom.treeDepth)),
+      strength: clamp01(
+        0.22 +
+          0.5 * similarity(atom, parent) +
+          0.16 * (1 - atom.treeDepth) +
+          0.28 * clamp01((relationByChildId.get(atom.id) ?? 0) * 0.7),
+      ),
     });
   }
 

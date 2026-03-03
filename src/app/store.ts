@@ -496,6 +496,121 @@ function randomId(): string {
   return crypto.randomUUID();
 }
 
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+type TimeProfile = {
+  startDaysAgo: number;
+  spanDays: number;
+  weight: number;
+  dueLeadMinDays: number;
+  dueLeadMaxDays: number;
+  noDueChance: number;
+  urgencyBias: number;
+  importanceBias: number;
+};
+
+function weightedIndex(random: () => number, profiles: TimeProfile[]): number {
+  const totalWeight = profiles.reduce((acc, profile) => acc + profile.weight, 0);
+  let value = random() * totalWeight;
+  for (let i = 0; i < profiles.length; i += 1) {
+    value -= profiles[i].weight;
+    if (value <= 0) return i;
+  }
+  return profiles.length - 1;
+}
+
+function sampleWorklikeTimestamp(random: () => number, now: number, startDaysAgo: number, spanDays: number): number {
+  const dayOffset = startDaysAgo + random() * spanDays;
+  const dayBase = now - dayOffset * DAY_MS;
+  const primaryHour = 7 + Math.floor(random() * 12); // 07:00-18:59
+  const offHour = Math.floor(random() * 24);
+  const hour = random() < 0.82 ? primaryHour : offHour;
+  const minute = Math.floor(random() * 60);
+  return dayBase - (dayBase % DAY_MS) + hour * HOUR_MS + minute * MINUTE_MS + Math.floor(random() * 10 * MINUTE_MS);
+}
+
+function computeStateForTiming(random: () => number, due: number | undefined, now: number): AtomState {
+  const roll = random();
+  if (due === undefined) {
+    if (roll < 0.12) return "new";
+    if (roll < 0.7) return "active";
+    if (roll < 0.85) return "snoozed";
+    return "done";
+  }
+  const dueDeltaDays = (due - now) / DAY_MS;
+  if (dueDeltaDays < -3) {
+    if (roll < 0.62) return "done";
+    if (roll < 0.84) return "active";
+    return "snoozed";
+  }
+  if (dueDeltaDays < 0) {
+    if (roll < 0.64) return "active";
+    if (roll < 0.9) return "done";
+    return "new";
+  }
+  if (dueDeltaDays < 2) {
+    if (roll < 0.58) return "active";
+    if (roll < 0.82) return "new";
+    return "snoozed";
+  }
+  if (roll < 0.22) return "new";
+  if (roll < 0.68) return "active";
+  if (roll < 0.88) return "snoozed";
+  return "done";
+}
+
+const DEMO_PEOPLE = [
+  "Maya Patel",
+  "Liam Chen",
+  "Ava Nguyen",
+  "Noah Kim",
+  "Sofia Rivera",
+  "Ethan Brooks",
+  "Isla Morgan",
+  "Lucas Bennett",
+  "Zoe Harper",
+  "Mason Diaz",
+  "Nora Shah",
+  "Owen Clark",
+];
+
+const DEMO_PROJECTS = [
+  "Q2 Revenue Forecast",
+  "Mobile Checkout Refresh",
+  "Onboarding Funnel Audit",
+  "Enterprise Contract Renewal",
+  "Warehouse SLA Review",
+  "Customer Health Dashboard",
+  "Fraud Rules Tuning",
+  "Billing Migration",
+  "Roadmap Prioritization",
+  "Support Deflection Pilot",
+];
+
+const DEMO_DATASETS = [
+  "pipeline.csv",
+  "forecast-v4.xlsx",
+  "experiment-results.parquet",
+  "crm-export.json",
+  "weekly-kpis.csv",
+  "cohort-retention.xlsx",
+  "latency-report.csv",
+  "support-volume.json",
+];
+
+const DEMO_TASK_ACTIONS = [
+  "Review",
+  "Prepare",
+  "Finalize",
+  "Validate",
+  "Draft",
+  "Update",
+  "Escalate",
+  "Confirm",
+];
+
 export function buildMockAtoms(
   count = 20000,
 ): Array<
@@ -519,21 +634,49 @@ export function buildMockAtoms(
   >
 > {
   const now = Date.now();
-  const states: AtomState[] = ["new", "active", "snoozed", "done"];
+  const random = () => Math.random();
+  const profiles: TimeProfile[] = [
+    { startDaysAgo: 0, spanDays: 2, weight: 20, dueLeadMinDays: -1.5, dueLeadMaxDays: 3, noDueChance: 0.18, urgencyBias: 0.7, importanceBias: 0.58 },
+    { startDaysAgo: 3, spanDays: 6, weight: 24, dueLeadMinDays: -4, dueLeadMaxDays: 8, noDueChance: 0.24, urgencyBias: 0.56, importanceBias: 0.52 },
+    { startDaysAgo: 10, spanDays: 12, weight: 22, dueLeadMinDays: -8, dueLeadMaxDays: 14, noDueChance: 0.3, urgencyBias: 0.48, importanceBias: 0.5 },
+    { startDaysAgo: 24, spanDays: 24, weight: 18, dueLeadMinDays: -12, dueLeadMaxDays: 18, noDueChance: 0.34, urgencyBias: 0.38, importanceBias: 0.45 },
+    { startDaysAgo: 50, spanDays: 70, weight: 10, dueLeadMinDays: -22, dueLeadMaxDays: 24, noDueChance: 0.44, urgencyBias: 0.31, importanceBias: 0.42 },
+    { startDaysAgo: 130, spanDays: 210, weight: 6, dueLeadMinDays: -45, dueLeadMaxDays: 30, noDueChance: 0.52, urgencyBias: 0.26, importanceBias: 0.37 },
+  ];
+
   return Array.from({ length: count }, (_, i) => {
-    const ts = now - Math.floor(Math.random() * 1000 * 60 * 60 * 24 * 30);
-    const due = Math.random() > 0.7 ? now + Math.floor((Math.random() - 0.5) * 1000 * 60 * 60 * 24 * 14) : undefined;
+    const profile = profiles[weightedIndex(random, profiles)];
+    const ts = sampleWorklikeTimestamp(random, now, profile.startDaysAgo, profile.spanDays);
+    let due: number | undefined;
+    if (random() >= profile.noDueChance) {
+      const dueLeadDays = profile.dueLeadMinDays + random() * (profile.dueLeadMaxDays - profile.dueLeadMinDays);
+      due = ts + dueLeadDays * DAY_MS + Math.floor((random() - 0.5) * 8 * HOUR_MS);
+    }
+
+    const dueDeltaDays = due === undefined ? undefined : (due - now) / DAY_MS;
+    let urgency = profile.urgencyBias + (random() - 0.5) * 0.34;
+    if (dueDeltaDays !== undefined) {
+      if (dueDeltaDays < 0) urgency += 0.26;
+      else if (dueDeltaDays < 1) urgency += 0.18;
+      else if (dueDeltaDays < 7) urgency += 0.08;
+    }
+    let importance = profile.importanceBias + (random() - 0.5) * 0.36;
+    if (dueDeltaDays !== undefined && dueDeltaDays < -10) importance -= 0.07;
+
+    urgency = Math.max(0, Math.min(1, urgency));
+    importance = Math.max(0, Math.min(1, importance));
+    const state = computeStateForTiming(random, due, now);
     return {
       id: randomId(),
       type: randomChoice(ATOM_TYPES),
-      state: randomChoice(states),
+      state,
       ts,
       due,
-      urgency: Math.random(),
-      importance: Math.random(),
+      urgency,
+      importance,
       title: `Atom ${i + 1}`,
       preview: `Synthetic atom ${i + 1} for GPU load testing.`,
-      payload: { index: i, source: "mock" },
+      payload: { index: i, source: "mock", timeProfileStartDaysAgo: profile.startDaysAgo },
     };
   });
 }
@@ -573,40 +716,246 @@ export function buildSeededDemoAtoms(
 > {
   const now = Date.now();
   const random = mulberry32(seed);
-  const states: AtomState[] = ["new", "active", "snoozed", "done"];
-  const clusterCount = 12;
-  const clusters = Array.from({ length: clusterCount }, (_, i) => ({
-    centerDaysAgo: i * 2,
-    urgencyBias: 0.2 + (i % 4) * 0.18,
-    importanceBias: 0.25 + ((i + 2) % 5) * 0.14,
-  }));
+  type DemoSeedAtom = Omit<
+    Atom,
+    | "stableKey"
+    | "score"
+    | "sizeTier"
+    | "targetX"
+    | "targetY"
+    | "targetZ"
+    | "x"
+    | "y"
+    | "z"
+    | "renderSize"
+    | "treeDepth"
+    | "treeRole"
+    | "growthPhase"
+    | "parentId"
+    | "descendantCount"
+  >;
+  const clusterCount = 16;
+  const profiles: TimeProfile[] = [
+    { startDaysAgo: 0, spanDays: 1.6, weight: 14, dueLeadMinDays: -0.9, dueLeadMaxDays: 2.5, noDueChance: 0.14, urgencyBias: 0.78, importanceBias: 0.64 },
+    { startDaysAgo: 2, spanDays: 3.5, weight: 16, dueLeadMinDays: -2.5, dueLeadMaxDays: 5.5, noDueChance: 0.18, urgencyBias: 0.67, importanceBias: 0.59 },
+    { startDaysAgo: 6, spanDays: 6.5, weight: 15, dueLeadMinDays: -4.5, dueLeadMaxDays: 8, noDueChance: 0.23, urgencyBias: 0.59, importanceBias: 0.56 },
+    { startDaysAgo: 13, spanDays: 10, weight: 14, dueLeadMinDays: -7, dueLeadMaxDays: 11, noDueChance: 0.28, urgencyBias: 0.52, importanceBias: 0.54 },
+    { startDaysAgo: 24, spanDays: 16, weight: 13, dueLeadMinDays: -10, dueLeadMaxDays: 16, noDueChance: 0.34, urgencyBias: 0.44, importanceBias: 0.49 },
+    { startDaysAgo: 42, spanDays: 24, weight: 12, dueLeadMinDays: -15, dueLeadMaxDays: 20, noDueChance: 0.38, urgencyBias: 0.36, importanceBias: 0.44 },
+    { startDaysAgo: 72, spanDays: 42, weight: 9, dueLeadMinDays: -22, dueLeadMaxDays: 28, noDueChance: 0.45, urgencyBias: 0.31, importanceBias: 0.41 },
+    { startDaysAgo: 130, spanDays: 120, weight: 7, dueLeadMinDays: -35, dueLeadMaxDays: 35, noDueChance: 0.53, urgencyBias: 0.24, importanceBias: 0.35 },
+  ];
+  const atoms: DemoSeedAtom[] = [];
+  let nextId = 0;
+  let threadOrdinal = 0;
+  const makeId = (): string => `demo-${seed}-${nextId++}`;
 
-  return Array.from({ length: count }, (_, i) => {
-    const cluster = clusters[i % clusters.length];
-    const ts = now - Math.floor((cluster.centerDaysAgo + random() * 5) * 24 * 60 * 60 * 1000);
-    const dueChance = random();
-    let due: number | undefined;
-    if (dueChance < 0.2) due = now - Math.floor(random() * 3 * 24 * 60 * 60 * 1000);
-    else if (dueChance < 0.72) due = now + Math.floor(random() * 8 * 24 * 60 * 60 * 1000);
+  const pushAtom = (atom: DemoSeedAtom): void => {
+    if (atoms.length < count) atoms.push(atom);
+  };
 
-    const urgency = Math.max(0, Math.min(1, cluster.urgencyBias + (random() - 0.5) * 0.4));
-    const importance = Math.max(0, Math.min(1, cluster.importanceBias + (random() - 0.5) * 0.45));
-    return {
-      id: `demo-${seed}-${i}`,
-      type: ATOM_TYPES[Math.floor(random() * ATOM_TYPES.length)],
-      state: states[Math.floor(random() * states.length)],
-      ts,
-      due,
-      urgency,
-      importance,
-      title: `Demo Atom ${i + 1}`,
-      preview: `Cluster ${i % clusterCount} with urgency ${urgency.toFixed(2)} and importance ${importance.toFixed(2)}.`,
+  while (atoms.length < count) {
+    const cluster = threadOrdinal % clusterCount;
+    const profile = profiles[weightedIndex(random, profiles)];
+    const project = DEMO_PROJECTS[Math.floor(random() * DEMO_PROJECTS.length)];
+    const person = DEMO_PEOPLE[Math.floor(random() * DEMO_PEOPLE.length)];
+    const dataset = DEMO_DATASETS[Math.floor(random() * DEMO_DATASETS.length)];
+    const action = DEMO_TASK_ACTIONS[Math.floor(random() * DEMO_TASK_ACTIONS.length)];
+    const threadId = `thread-${seed}-${threadOrdinal}`;
+    const projectId = `project-${project.replace(/\s+/g, "-").toLowerCase()}`;
+    const personId = `person-${person.replace(/\s+/g, "-").toLowerCase()}`;
+    const baseTs = sampleWorklikeTimestamp(random, now, profile.startDaysAgo, profile.spanDays);
+
+    const dueLeadDays = profile.dueLeadMinDays + random() * (profile.dueLeadMaxDays - profile.dueLeadMinDays);
+    const taskDue = random() < profile.noDueChance * 0.55 ? undefined : baseTs + dueLeadDays * DAY_MS + Math.floor((random() - 0.5) * 7 * HOUR_MS);
+    const taskDeltaDays = taskDue === undefined ? undefined : (taskDue - now) / DAY_MS;
+    let taskUrgency = profile.urgencyBias + 0.08 + (random() - 0.5) * 0.22;
+    let taskImportance = profile.importanceBias + 0.1 + (random() - 0.5) * 0.18;
+    if (taskDeltaDays !== undefined) {
+      if (taskDeltaDays < 0) taskUrgency += 0.2;
+      else if (taskDeltaDays < 2) taskUrgency += 0.14;
+    }
+    taskUrgency = Math.max(0, Math.min(1, taskUrgency));
+    taskImportance = Math.max(0, Math.min(1, taskImportance));
+
+    const taskId = makeId();
+    pushAtom({
+      id: taskId,
+      type: "task",
+      state: computeStateForTiming(random, taskDue, now),
+      ts: baseTs,
+      due: taskDue,
+      urgency: taskUrgency,
+      importance: taskImportance,
+      title: `${action} ${project}`,
+      preview: `Coordinate with ${person} and update ${dataset}.`,
       payload: {
         source: "demo-seed",
         seed,
-        index: i,
-        cluster: i % clusterCount,
+        index: atoms.length,
+        cluster,
+        timeProfileStartDaysAgo: profile.startDaysAgo,
+        threadId,
+        projectId,
+        personId,
+        phase: 0,
+        kind: "task",
       },
-    };
-  });
+    });
+
+    if (atoms.length >= count) break;
+
+    const personTs = baseTs + Math.floor((0.25 + random() * 0.5) * HOUR_MS);
+    const personIdAtom = makeId();
+    pushAtom({
+      id: personIdAtom,
+      type: "custom",
+      state: "active",
+      ts: personTs,
+      due: undefined,
+      urgency: Math.max(0, Math.min(1, profile.urgencyBias - 0.05 + (random() - 0.5) * 0.14)),
+      importance: Math.max(0, Math.min(1, profile.importanceBias + 0.14 + (random() - 0.5) * 0.12)),
+      title: person,
+      preview: `Primary contact for ${project}.`,
+      payload: {
+        source: "demo-seed",
+        seed,
+        index: atoms.length,
+        cluster,
+        threadId,
+        projectId,
+        personId,
+        phase: 1,
+        kind: "person",
+        relatesTo: taskId,
+      },
+    });
+
+    if (atoms.length >= count) break;
+
+    const emailCount = 1 + Math.floor(random() * 3);
+    let previousId = taskId;
+    let lastEmailTs = baseTs;
+    for (let e = 0; e < emailCount && atoms.length < count; e += 1) {
+      const emailTs = baseTs + Math.floor((0.8 + e * 0.45 + random() * 0.9) * HOUR_MS);
+      lastEmailTs = Math.max(lastEmailTs, emailTs);
+      const emailId = makeId();
+      const emailDue = random() < 0.6 ? undefined : emailTs + Math.floor((0.3 + random() * 2.2) * DAY_MS);
+      pushAtom({
+        id: emailId,
+        type: "email",
+        state: computeStateForTiming(random, emailDue, now),
+        ts: emailTs,
+        due: emailDue,
+        urgency: Math.max(0, Math.min(1, profile.urgencyBias + 0.05 + (random() - 0.5) * 0.24)),
+        importance: Math.max(0, Math.min(1, profile.importanceBias + (random() - 0.5) * 0.2)),
+        title: `Email ${e + 1}: ${project}`,
+        preview: `To ${person}: status and next step for ${project}.`,
+        payload: {
+          source: "demo-seed",
+          seed,
+          index: atoms.length,
+          cluster,
+          threadId,
+          projectId,
+          personId,
+          phase: 2 + e,
+          kind: "email",
+          relatesTo: previousId,
+        },
+      });
+      previousId = emailId;
+    }
+
+    if (atoms.length >= count) break;
+
+    const fileId = makeId();
+    const fileTs = lastEmailTs + Math.floor((0.5 + random() * 1.8) * HOUR_MS);
+    const fileDue = random() < 0.45 ? fileTs + Math.floor((1 + random() * 5) * DAY_MS) : undefined;
+    pushAtom({
+      id: fileId,
+      type: "file",
+      state: computeStateForTiming(random, fileDue, now),
+      ts: fileTs,
+      due: fileDue,
+      urgency: Math.max(0, Math.min(1, profile.urgencyBias - 0.02 + (random() - 0.5) * 0.2)),
+      importance: Math.max(0, Math.min(1, profile.importanceBias + 0.12 + (random() - 0.5) * 0.2)),
+      title: dataset,
+      preview: `Data artifact attached to ${project}.`,
+      payload: {
+        source: "demo-seed",
+        seed,
+        index: atoms.length,
+        cluster,
+        threadId,
+        projectId,
+        personId,
+        phase: 7,
+        kind: "data",
+        relatesTo: previousId,
+      },
+    });
+
+    if (atoms.length >= count) break;
+
+    const eventTs = fileTs + Math.floor((0.4 + random() * 2.4) * HOUR_MS);
+    const eventDue = eventTs + Math.floor((1 + random() * 7) * DAY_MS);
+    const eventId = makeId();
+    pushAtom({
+      id: eventId,
+      type: "event",
+      state: computeStateForTiming(random, eventDue, now),
+      ts: eventTs,
+      due: eventDue,
+      urgency: Math.max(0, Math.min(1, profile.urgencyBias + (random() - 0.5) * 0.24)),
+      importance: Math.max(0, Math.min(1, profile.importanceBias + 0.08 + (random() - 0.5) * 0.22)),
+      title: `${project} sync`,
+      preview: `Review outcomes with ${person}.`,
+      payload: {
+        source: "demo-seed",
+        seed,
+        index: atoms.length,
+        cluster,
+        threadId,
+        projectId,
+        personId,
+        phase: 8,
+        kind: "event",
+        relatesTo: fileId,
+      },
+    });
+
+    if (atoms.length >= count) break;
+
+    if (random() < 0.55 && atoms.length < count) {
+      const noteTs = eventTs + Math.floor((0.2 + random()) * HOUR_MS);
+      pushAtom({
+        id: makeId(),
+        type: "message",
+        state: "new",
+        ts: noteTs,
+        due: noteTs + Math.floor((0.8 + random() * 2.4) * DAY_MS),
+        urgency: Math.max(0, Math.min(1, profile.urgencyBias + 0.06 + (random() - 0.5) * 0.18)),
+        importance: Math.max(0, Math.min(1, profile.importanceBias + (random() - 0.5) * 0.14)),
+        title: `Follow-up note: ${project}`,
+        preview: `Capture action items after sync with ${person}.`,
+        payload: {
+          source: "demo-seed",
+          seed,
+          index: atoms.length,
+          cluster,
+          threadId,
+          projectId,
+          personId,
+          phase: 9,
+          kind: "note",
+          relatesTo: eventId,
+        },
+      });
+    }
+
+    threadOrdinal += 1;
+  }
+
+  return atoms;
 }

@@ -34,6 +34,7 @@ export class Renderer {
   private spatialHash = new SpatialHash();
   private hoveredLastRebuild = -1;
   private projectedById = new Map<string, { x: number; y: number; z: number; scale: number; screenX: number; screenY: number; radius: number }>();
+  private growthRenderOrder: string[] = [];
   private dragState: {
     active: boolean;
     mode: "none" | "pan2d" | "orbit" | "pan3d" | "panel";
@@ -154,8 +155,10 @@ export class Renderer {
           )
         : undefined;
 
+    const renderAtoms = this.getRenderAtoms(layoutMode, visible).slice(0, MAX_INSTANCES);
+    this.growthRenderOrder = layoutMode === "growth_tree" ? renderAtoms.map((atom) => atom.id) : [];
     const instanceCount = writeInstances(this.gpu.device, this.buffers.instanceBuffer, {
-      atoms: visible.slice(0, MAX_INSTANCES),
+      atoms: renderAtoms,
       hoveredId: snapshot.hoveredId,
       selectedId: snapshot.selectedId,
       baseSize: BASE_TILE_SIZE,
@@ -447,6 +450,20 @@ export class Renderer {
     }
   }
 
+  private getRenderAtoms(layoutMode: LayoutMode, visible: Atom[]): Atom[] {
+    if (layoutMode === "growth_tree") {
+      return visible
+        .filter((atom) => this.projectedById.has(atom.id))
+        .sort((a, b) => {
+          const az = this.projectedById.get(a.id)?.z ?? Number.POSITIVE_INFINITY;
+          const bz = this.projectedById.get(b.id)?.z ?? Number.POSITIVE_INFINITY;
+          if (bz !== az) return bz - az; // far -> near for alpha blending
+          return a.stableKey - b.stableKey;
+        });
+    }
+    return visible;
+  }
+
   private drawGround(ctx: CanvasRenderingContext2D): void {
     ctx.save();
     const cx = this.canvas.width * 0.5;
@@ -532,24 +549,24 @@ export class Renderer {
   }
 
   private pickGrowthAt(offsetX: number, offsetY: number): Atom | null {
-    let best: Atom | null = null;
-    let bestDist = Number.POSITIVE_INFINITY;
+    const dpr = window.devicePixelRatio || 1;
+    const pointerX = offsetX * dpr;
+    const pointerY = offsetY * dpr;
     const atoms = this.store.getVisibleAtoms();
     const byId = new Map(atoms.map((atom) => [atom.id, atom]));
-    for (const [id, p] of this.projectedById) {
+    for (let i = this.growthRenderOrder.length - 1; i >= 0; i -= 1) {
+      const id = this.growthRenderOrder[i];
+      const p = this.projectedById.get(id);
+      if (!p) continue;
       const atom = byId.get(id);
       if (!atom) continue;
-      const dx = offsetX - p.screenX;
-      const dy = offsetY - p.screenY;
+      const dx = pointerX - p.screenX;
+      const dy = pointerY - p.screenY;
       const r = Math.max(6, p.radius);
       const distSq = dx * dx + dy * dy;
-      if (distSq > r * r) continue;
-      if (distSq < bestDist) {
-        best = atom;
-        bestDist = distSq;
-      }
+      if (distSq <= r * r) return atom;
     }
-    return best;
+    return null;
   }
 
   private findPanelAt(worldX: number, worldY: number): PanelLayout | null {
