@@ -29,10 +29,13 @@ struct VsOut {
   @builtin(position) position : vec4f,
   @location(0) uv : vec2f,
   @location(1) color : vec4f,
+  @interpolate(flat)
   @location(2) flags : u32,
   @location(3) age : f32,
   @location(4) dueDelta : f32,
   @location(5) urgency : f32,
+  @interpolate(flat)
+  @location(6) atomId : u32,
 };
 
 @group(0) @binding(0) var<uniform> globals : Globals;
@@ -71,6 +74,7 @@ fn vs_main(@builtin(vertex_index) vtx : u32, @builtin(instance_index) inst : u32
   out.age = max(0.0, globals.now - item.t0);
   out.dueDelta = select(1e9, item.due - globals.now, item.due >= 0.0);
   out.urgency = item.z;
+  out.atomId = item.atomId;
   return out;
 }
 
@@ -82,19 +86,17 @@ fn fs_main(in : VsOut) -> @location(0) vec4f {
   let archived = (in.flags & (1u << 7u)) != 0u;
 
   var color = in.color;
-  let decay = exp(-in.age / 1209600.0);
-  color.rgb *= mix(0.45, 1.0, decay);
+  let ageBrightness = exp(-in.age / 604800.0);
+  color = vec4f(color.rgb * mix(0.22, 1.0, ageBrightness), color.a);
 
   if (archived) {
-    color.rgb *= 0.4;
+    color = vec4f(color.rgb * 0.4, color.a);
   }
 
-  let urgencyBoost = smoothstep(0.55, 1.0, in.urgency);
-  color.rgb = mix(color.rgb, color.rgb * 1.25 + vec3f(0.05, 0.02, 0.0), urgencyBoost * 0.35);
-
   if (pulsing) {
-    let pulse = 0.9 + 0.1 * (0.5 + 0.5 * sin(globals.now * 4.0));
-    color.rgb *= pulse;
+    let atomPhase = f32(in.atomId % 4096u) * 0.017;
+    let pulse = 0.9 + 0.1 * (0.5 + 0.5 * sin(globals.now * 4.0 + atomPhase));
+    color = vec4f(color.rgb * pulse, color.a);
   }
 
   var dueAccent = vec3f(0.0, 0.0, 0.0);
@@ -110,10 +112,12 @@ fn fs_main(in : VsOut) -> @location(0) vec4f {
     dueAccentStrength = 0.45;
   }
 
-  let edgeDist = min(min(in.uv.x, in.uv.y), min(1.0 - in.uv.x, 1.0 - in.uv.y));
-  let edge = smoothstep(0.02, 0.06, edgeDist);
+  let cornerRadius = 0.14;
+  let p = abs(in.uv - vec2f(0.5, 0.5)) - vec2f(0.5 - cornerRadius, 0.5 - cornerRadius);
+  let roundedDist = length(max(p, vec2f(0.0, 0.0))) + min(max(p.x, p.y), 0.0) - cornerRadius;
+  let edge = 1.0 - smoothstep(0.0, 0.01, roundedDist);
   let shadow = smoothstep(0.0, 0.08, in.uv.y) * 0.08;
-  color.rgb -= shadow;
+  color = vec4f(color.rgb - vec3f(shadow), color.a);
 
   var outline = vec3f(0.0, 0.0, 0.0);
   var outlineStrength = 0.0;
@@ -125,10 +129,12 @@ fn fs_main(in : VsOut) -> @location(0) vec4f {
     outlineStrength = 0.8;
   }
 
-  let border = 1.0 - smoothstep(0.03, 0.06, edgeDist);
-  color.rgb = mix(color.rgb, dueAccent, border * dueAccentStrength);
-  color.rgb = mix(color.rgb, outline, border * outlineStrength);
-  color.rgb *= edge;
+  let baseBorder = 1.0 - smoothstep(-0.02, 0.02, abs(roundedDist));
+  let border = 1.0 - smoothstep(-0.01, 0.01, abs(roundedDist));
+  color = vec4f(mix(color.rgb, vec3f(0.08, 0.10, 0.14), baseBorder * 0.6), color.a);
+  color = vec4f(mix(color.rgb, dueAccent, border * dueAccentStrength), color.a);
+  color = vec4f(mix(color.rgb, outline, border * outlineStrength), color.a);
+  color = vec4f(color.rgb * edge, color.a);
 
   return vec4f(color.rgb, 1.0);
 }

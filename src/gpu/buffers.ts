@@ -1,6 +1,6 @@
 import type { Atom } from "../data/types";
 import { TYPE_TO_ID } from "../data/types";
-import { sizeFromTier } from "../layout/spatialHash";
+import { tileSizeForTier } from "../layout/layout";
 
 const INSTANCE_STRIDE_BYTES = 48;
 const GLOBALS_SIZE_BYTES = 48;
@@ -66,8 +66,7 @@ export function writeInstances(device: GPUDevice, buffer: GPUBuffer, input: Inst
   for (let i = 0; i < count; i += 1) {
     const atom = input.atoms[i];
     const baseOffset = i * (INSTANCE_STRIDE_BYTES / 4);
-    const sizeScale = sizeFromTier(atom.sizeTier);
-    const size = input.baseSize * sizeScale;
+    const size = tileSizeForTier(input.baseSize, atom.sizeTier);
 
     let flags = TYPE_TO_ID.get(atom.type) ?? 0;
     if (atom.id === input.selectedId) flags |= FLAG_SELECTED;

@@ -9,7 +9,7 @@ export async function initWebGpu(canvas: HTMLCanvasElement): Promise<GpuContext>
   if (!navigator.gpu) {
     throw new Error("WebGPU not supported in this browser.");
   }
-  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) {
     throw new Error("No compatible GPU adapter found.");
   }

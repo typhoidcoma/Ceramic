@@ -205,13 +205,13 @@ export class AtomStore {
     return this.visibleAtomsCache;
   }
 
-  recalcLayout(viewportWorldWidth: number, baseSize: number): void {
+  recalcLayout(viewportWorldWidth: number, viewportWorldHeight: number, baseSize: number): void {
     const visible = this.getVisibleAtoms();
     if (visible.length === 0) {
       this.layoutDirty = false;
       return;
     }
-    assignGridTargets(visible, viewportWorldWidth, baseSize, this.layoutMode);
+    assignGridTargets(visible, viewportWorldWidth, viewportWorldHeight, baseSize, this.layoutMode);
     this.layoutDirty = false;
   }
 

@@ -1,4 +1,4 @@
-import { easePosition } from "../layout/layout";
+import { easePosition, TILE_GUTTER_PX } from "../layout/layout";
 import { SpatialHash } from "../layout/spatialHash";
 import type { AtomStore } from "../app/store";
 import { createBuffers, writeGlobals, writeInstances } from "./buffers";
@@ -64,6 +64,13 @@ export class Renderer {
     cancelAnimationFrame(this.raf);
   }
 
+  resetView(): void {
+    this.camX = 0;
+    this.camY = 0;
+    this.zoom = 1;
+    this.store.markLayoutDirty();
+  }
+
   private frame = (): void => {
     if (!this.started || !this.gpu || !this.pipeline || !this.buffers || !this.globalsBindGroup || !this.instancesBindGroup) return;
 
@@ -73,8 +80,9 @@ export class Renderer {
 
     this.resize();
     const viewportWorldWidth = this.canvas.width / this.zoom;
+    const viewportWorldHeight = this.canvas.height / this.zoom;
     if (this.store.needsLayout()) {
-      this.store.recalcLayout(viewportWorldWidth, BASE_TILE_SIZE);
+      this.store.recalcLayout(viewportWorldWidth, viewportWorldHeight, BASE_TILE_SIZE);
     }
 
     const visible = this.store.getVisibleAtoms();
@@ -82,7 +90,7 @@ export class Renderer {
 
     const rebuildEvery = 4;
     if (this.frameCounter % rebuildEvery === 0 || this.hoveredLastRebuild !== visible.length) {
-      this.spatialHash.rebuild(visible, BASE_TILE_SIZE * 1.15);
+      this.spatialHash.rebuild(visible, BASE_TILE_SIZE + TILE_GUTTER_PX, BASE_TILE_SIZE);
       this.hoveredLastRebuild = visible.length;
     }
 
@@ -125,7 +133,9 @@ export class Renderer {
     pass.setPipeline(this.pipeline.pipeline);
     pass.setBindGroup(0, this.globalsBindGroup);
     pass.setBindGroup(1, this.instancesBindGroup);
-    pass.draw(6, instanceCount, 0, 0);
+    if (instanceCount > 0) {
+      pass.draw(6, instanceCount, 0, 0);
+    }
     pass.end();
     this.gpu.device.queue.submit([encoder.finish()]);
 
@@ -153,17 +163,21 @@ export class Renderer {
 
   private attachInputHandlers(): void {
     window.addEventListener("resize", () => this.store.markLayoutDirty());
+    this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
     this.canvas.addEventListener("pointerdown", (event) => {
+      if ((event.buttons & (1 | 2 | 4)) === 0) return;
       this.dragState = { active: true, x: event.clientX, y: event.clientY };
+      this.canvas.style.cursor = "grabbing";
       this.canvas.setPointerCapture(event.pointerId);
     });
 
     this.canvas.addEventListener("pointerup", (event) => {
+      this.canvas.style.cursor = "default";
       if (this.dragState.active) {
         const dx = Math.abs(event.clientX - this.dragState.x);
         const dy = Math.abs(event.clientY - this.dragState.y);
-        if (dx < 3 && dy < 3) {
+        if (event.button === 0 && dx < 3 && dy < 3) {
           const world = this.screenToWorld(event.offsetX, event.offsetY);
           const hit = this.spatialHash.pick(world.x, world.y);
           this.store.setSelected(hit?.id ?? null);
@@ -174,12 +188,12 @@ export class Renderer {
     });
 
     this.canvas.addEventListener("pointermove", (event) => {
-      if (this.dragState.active && event.buttons === 1) {
+      if (this.dragState.active && (event.buttons & (1 | 2 | 4)) !== 0) {
         const dx = event.clientX - this.dragState.x;
         const dy = event.clientY - this.dragState.y;
         this.dragState.x = event.clientX;
         this.dragState.y = event.clientY;
-        this.camX -= dx / this.zoom;
+        this.camX += dx / this.zoom;
         this.camY -= dy / this.zoom;
         return;
       }
@@ -192,8 +206,13 @@ export class Renderer {
       "wheel",
       (event) => {
         event.preventDefault();
+        if (event.shiftKey) {
+          this.camX += event.deltaY / this.zoom;
+          this.store.markLayoutDirty();
+          return;
+        }
         const before = this.screenToWorld(event.offsetX, event.offsetY);
-        const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08;
+        const zoomFactor = Math.exp(-event.deltaY * 0.001);
         this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.zoom * zoomFactor));
         const after = this.screenToWorld(event.offsetX, event.offsetY);
         this.camX += before.x - after.x;
@@ -202,6 +221,10 @@ export class Renderer {
       },
       { passive: false },
     );
+
+    this.canvas.addEventListener("dblclick", () => {
+      this.resetView();
+    });
   }
 
   private screenToWorld(screenX: number, screenY: number): { x: number; y: number } {

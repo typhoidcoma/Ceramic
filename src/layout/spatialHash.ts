@@ -1,4 +1,5 @@
 import type { Atom } from "../data/types";
+import { tileSizeForTier } from "./layout";
 
 type Cell = {
   indices: number[];
@@ -6,13 +7,15 @@ type Cell = {
 
 export class SpatialHash {
   private cellSize = 64;
+  private baseSize = 22;
   private map = new Map<string, Cell>();
   private atoms: Atom[] = [];
 
-  rebuild(atoms: Atom[], cellSize: number): void {
+  rebuild(atoms: Atom[], cellSize: number, baseSize: number): void {
     this.map.clear();
     this.atoms = atoms;
     this.cellSize = Math.max(1, cellSize);
+    this.baseSize = baseSize;
 
     for (let i = 0; i < atoms.length; i += 1) {
       const atom = atoms[i];
@@ -36,7 +39,7 @@ export class SpatialHash {
 
     for (const index of bucket.indices) {
       const atom = this.atoms[index];
-      const size = sizeFromTier(atom.sizeTier);
+      const size = tileSizeForTier(this.baseSize, atom.sizeTier);
       const half = size * 0.5;
       if (worldX >= atom.x - half && worldX <= atom.x + half && worldY >= atom.y - half && worldY <= atom.y + half) {
         return atom;
@@ -48,10 +51,4 @@ export class SpatialHash {
   private key(cx: number, cy: number): string {
     return `${cx}:${cy}`;
   }
-}
-
-export function sizeFromTier(tier: 0 | 1 | 2): number {
-  if (tier === 2) return 2;
-  if (tier === 1) return 1.4;
-  return 1;
 }
