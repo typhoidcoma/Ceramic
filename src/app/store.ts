@@ -1,5 +1,6 @@
 import { ATOM_TYPES, type Atom, type AtomPatch, type AtomState, type AtomType, enrichAtom } from "../data/types";
-import { assignGridTargets, type LayoutMode } from "../layout/layout";
+import { buildConstellationConnections, type AtomConnection } from "../layout/connections";
+import { assignGridTargets, type FocusMode, type LayoutMode, type PanelLayout, type TreeEdge, type TreeStats } from "../layout/layout";
 
 export type Filters = {
   types: Set<AtomType>;
@@ -15,9 +16,25 @@ type Snapshot = {
   fps: number;
   filters: Filters;
   layoutMode: LayoutMode;
+  panelLayouts: PanelLayout[];
+  activePanelRank: number | null;
+  connectionCount: number;
+  treeStats: TreeStats;
+  growthTime: number;
+  growthPlaying: boolean;
+  growthSpeed: "slow" | "normal" | "fast";
+  focusMode: FocusMode;
+  focusId: string | null;
 };
 
 type Listener = () => void;
+
+const EMPTY_TREE_STATS: TreeStats = {
+  trunkCount: 0,
+  branchCount: 0,
+  leafCount: 0,
+  maxDepth: 0,
+};
 
 export class AtomStore {
   private atomMap = new Map<string, Atom>();
@@ -30,7 +47,19 @@ export class AtomStore {
   private layoutDirty = true;
   private fps = 0;
   private viewVersion = 0;
-  private layoutMode: LayoutMode = "score";
+  private layoutMode: LayoutMode = "growth_tree";
+  private panelLayouts: PanelLayout[] = [];
+  private panelByAtomId = new Map<string, number>();
+  private constellationConnections: AtomConnection[] = [];
+  private treeEdges: TreeEdge[] = [];
+  private treeStats: TreeStats = { ...EMPTY_TREE_STATS };
+  private activePanelRank: number | null = null;
+  private panelScaleByRank = new Map<number, number>();
+  private growthTime = 0;
+  private growthPlaying = true;
+  private growthSpeed: "slow" | "normal" | "fast" = "normal";
+  private focusMode: FocusMode = "selected";
+  private focusId: string | null = null;
   private filters: Filters = {
     types: new Set(ATOM_TYPES),
     states: new Set(["new", "active", "snoozed", "done"]),
@@ -56,6 +85,15 @@ export class AtomStore {
       fps: this.fps,
       filters: this.filters,
       layoutMode: this.layoutMode,
+      panelLayouts: this.panelLayouts,
+      activePanelRank: this.activePanelRank,
+      connectionCount: this.constellationConnections.length,
+      treeStats: this.treeStats,
+      growthTime: this.growthTime,
+      growthPlaying: this.growthPlaying,
+      growthSpeed: this.growthSpeed,
+      focusMode: this.focusMode,
+      focusId: this.focusId,
     };
   }
 
@@ -94,6 +132,9 @@ export class AtomStore {
   setSelected(id: string | null): void {
     if (this.selectedId === id) return;
     this.selectedId = id;
+    if (this.layoutMode === "growth_tree" && this.focusMode === "selected") {
+      this.focusId = id;
+    }
     this.emit();
   }
 
@@ -106,14 +147,9 @@ export class AtomStore {
 
   toggleType(type: AtomType): void {
     const types = new Set(this.filters.types);
-    if (types.has(type)) {
-      types.delete(type);
-    } else {
-      types.add(type);
-    }
-    if (types.size === 0) {
-      types.add(type);
-    }
+    if (types.has(type)) types.delete(type);
+    else types.add(type);
+    if (types.size === 0) types.add(type);
     this.filters = { ...this.filters, types };
     this.visibleDirty = true;
     this.layoutDirty = true;
@@ -122,14 +158,9 @@ export class AtomStore {
 
   toggleState(state: AtomState): void {
     const states = new Set(this.filters.states);
-    if (states.has(state)) {
-      states.delete(state);
-    } else {
-      states.add(state);
-    }
-    if (states.size === 0) {
-      states.add(state);
-    }
+    if (states.has(state)) states.delete(state);
+    else states.add(state);
+    if (states.size === 0) states.add(state);
     this.filters = { ...this.filters, states };
     this.visibleDirty = true;
     this.layoutDirty = true;
@@ -139,33 +170,219 @@ export class AtomStore {
   setLayoutMode(layoutMode: LayoutMode): void {
     if (this.layoutMode === layoutMode) return;
     this.layoutMode = layoutMode;
+    if (layoutMode === "score" || layoutMode === "constellation" || layoutMode === "growth_tree") {
+      this.activePanelRank = null;
+    } else if (this.panelLayouts.length > 0) {
+      this.activePanelRank = this.panelLayouts[0].rank;
+    }
+    if (layoutMode === "growth_tree") {
+      this.growthTime = 0;
+      this.growthPlaying = true;
+      if (this.focusMode === "selected") this.focusId = this.selectedId;
+    }
     this.layoutDirty = true;
     this.emit();
   }
 
-  upsertMany(input: Array<Omit<Atom, "stableKey" | "score" | "sizeTier" | "targetX" | "targetY" | "x" | "y">>): void {
+  getPanelLayouts(): PanelLayout[] {
+    return this.panelLayouts;
+  }
+
+  setPanelLayouts(layouts: PanelLayout[]): void {
+    this.panelLayouts = layouts;
+    if (this.layoutMode === "score" || this.layoutMode === "constellation" || this.layoutMode === "growth_tree") {
+      this.activePanelRank = null;
+      return;
+    }
+    if (layouts.length === 0) {
+      this.activePanelRank = null;
+      return;
+    }
+    if (this.activePanelRank === null || !layouts.some((panel) => panel.rank === this.activePanelRank)) {
+      this.activePanelRank = layouts[0].rank;
+    }
+  }
+
+  setActivePanel(rank: number | null): void {
+    if (this.layoutMode === "score" || this.layoutMode === "constellation" || this.layoutMode === "growth_tree") return;
+    if (rank !== null && !this.panelLayouts.some((panel) => panel.rank === rank)) return;
+    if (this.activePanelRank === rank) return;
+    this.activePanelRank = rank;
+    this.emitView();
+  }
+
+  getActivePanel(): PanelLayout | null {
+    if (this.activePanelRank === null) return null;
+    return this.panelLayouts.find((panel) => panel.rank === this.activePanelRank) ?? null;
+  }
+
+  getAtomPanelRank(id: string | null): number | null {
+    if (!id) return null;
+    return this.panelByAtomId.get(id) ?? null;
+  }
+
+  getPanelScale(rank: number): number {
+    return this.panelScaleByRank.get(rank) ?? 1;
+  }
+
+  setPanelScale(rank: number, scale: number): void {
+    const clamped = Math.max(0.85, Math.min(2.4, scale));
+    const prev = this.panelScaleByRank.get(rank) ?? 1;
+    if (Math.abs(prev - clamped) < 0.001) return;
+    this.panelScaleByRank.set(rank, clamped);
+    this.layoutDirty = true;
+    this.emitView();
+  }
+
+  resetPanelScale(rank: number): void {
+    if (!this.panelScaleByRank.has(rank) || Math.abs((this.panelScaleByRank.get(rank) ?? 1) - 1) < 0.001) return;
+    this.panelScaleByRank.set(rank, 1);
+    this.layoutDirty = true;
+    this.emitView();
+  }
+
+  setGrowthPlaying(next: boolean): void {
+    if (this.growthPlaying === next) return;
+    this.growthPlaying = next;
+    this.emitView();
+  }
+
+  toggleGrowthPlaying(): void {
+    this.setGrowthPlaying(!this.growthPlaying);
+  }
+
+  restartGrowth(): void {
+    this.growthTime = 0;
+    this.growthPlaying = true;
+    this.emitView();
+  }
+
+  setGrowthSpeed(speed: "slow" | "normal" | "fast"): void {
+    if (this.growthSpeed === speed) return;
+    this.growthSpeed = speed;
+    this.emitView();
+  }
+
+  setFocusMode(mode: FocusMode): void {
+    if (this.focusMode === mode) return;
+    this.focusMode = mode;
+    if (mode === "off") this.focusId = null;
+    else this.focusId = this.selectedId;
+    this.emitView();
+  }
+
+  setFocusId(id: string | null): void {
+    if (this.focusId === id) return;
+    this.focusId = id;
+    this.emitView();
+  }
+
+  tickGrowth(dtSec: number): void {
+    if (this.layoutMode !== "growth_tree") return;
+    if (!this.growthPlaying) return;
+    const speed = this.growthSpeed === "slow" ? 0.12 : this.growthSpeed === "fast" ? 0.55 : 0.26;
+    const next = Math.min(1, this.growthTime + dtSec * speed);
+    if (Math.abs(next - this.growthTime) < 0.00001) return;
+    this.growthTime = next;
+    if (next >= 1) this.growthPlaying = false;
+    this.emitView();
+  }
+
+  getFocusSet(maxDistance = 2): Set<string> {
+    if (this.layoutMode !== "growth_tree" || this.focusMode === "off" || !this.focusId) return new Set();
+    const adjacency = new Map<string, string[]>();
+    for (const edge of this.treeEdges) {
+      const a = adjacency.get(edge.parentId);
+      if (a) a.push(edge.childId);
+      else adjacency.set(edge.parentId, [edge.childId]);
+      const b = adjacency.get(edge.childId);
+      if (b) b.push(edge.parentId);
+      else adjacency.set(edge.childId, [edge.parentId]);
+    }
+    const visited = new Set<string>([this.focusId]);
+    let frontier = [this.focusId];
+    for (let depth = 0; depth < maxDistance; depth += 1) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        const neighbors = adjacency.get(id) ?? [];
+        for (const neighbor of neighbors) {
+          if (visited.has(neighbor)) continue;
+          visited.add(neighbor);
+          next.push(neighbor);
+        }
+      }
+      frontier = next;
+      if (frontier.length === 0) break;
+    }
+    return visited;
+  }
+
+  upsertMany(
+    input: Array<
+      Omit<
+        Atom,
+        | "stableKey"
+        | "score"
+        | "sizeTier"
+        | "targetX"
+        | "targetY"
+        | "targetZ"
+        | "x"
+        | "y"
+        | "z"
+        | "renderSize"
+        | "treeDepth"
+        | "treeRole"
+        | "growthPhase"
+        | "parentId"
+        | "descendantCount"
+      >
+    >,
+  ): void {
     const now = Date.now();
     for (const item of input) {
       const existing = this.atomMap.get(item.id);
-      const enriched = enrichAtom({ ...item, x: existing?.x, y: existing?.y, targetX: existing?.targetX, targetY: existing?.targetY }, now);
+      const enriched = enrichAtom(
+        {
+          ...item,
+          x: existing?.x,
+          y: existing?.y,
+          z: existing?.z,
+          targetX: existing?.targetX,
+          targetY: existing?.targetY,
+          targetZ: existing?.targetZ,
+          treeDepth: existing?.treeDepth,
+          treeRole: existing?.treeRole,
+          growthPhase: existing?.growthPhase,
+          parentId: existing?.parentId,
+          descendantCount: existing?.descendantCount,
+          ...(existing?.renderSize !== undefined ? { renderSize: existing.renderSize } : {}),
+        },
+        now,
+      );
       this.atomMap.set(item.id, enriched);
     }
     this.visibleDirty = true;
     this.layoutDirty = true;
+    if (this.layoutMode === "growth_tree") {
+      this.growthTime = 0;
+      this.growthPlaying = true;
+    }
     this.emit();
   }
 
   patchOne(patch: AtomPatch): void {
     const existing = this.atomMap.get(patch.id);
     if (!existing) return;
-    const merged = {
-      ...existing,
-      ...patch,
-    };
+    const merged = { ...existing, ...patch };
     const enriched = enrichAtom(merged, Date.now());
     this.atomMap.set(patch.id, enriched);
     this.visibleDirty = true;
     this.layoutDirty = true;
+    if (this.layoutMode === "growth_tree") {
+      this.growthTime = 0;
+      this.growthPlaying = true;
+    }
     this.emit();
   }
 
@@ -174,6 +391,7 @@ export class AtomStore {
     this.atomMap.delete(id);
     if (this.selectedId === id) this.selectedId = null;
     if (this.hoveredId === id) this.hoveredId = null;
+    if (this.focusId === id) this.focusId = null;
     this.visibleDirty = true;
     this.layoutDirty = true;
     this.emit();
@@ -184,7 +402,17 @@ export class AtomStore {
     this.atomMap.clear();
     this.selectedId = null;
     this.hoveredId = null;
+    this.focusId = null;
     this.visibleAtomsCache = [];
+    this.panelLayouts = [];
+    this.panelByAtomId.clear();
+    this.constellationConnections = [];
+    this.treeEdges = [];
+    this.treeStats = { ...EMPTY_TREE_STATS };
+    this.activePanelRank = null;
+    this.panelScaleByRank.clear();
+    this.growthTime = 0;
+    this.growthPlaying = true;
     this.visibleDirty = true;
     this.layoutDirty = true;
     this.emit();
@@ -208,11 +436,37 @@ export class AtomStore {
   recalcLayout(viewportWorldWidth: number, viewportWorldHeight: number, baseSize: number): void {
     const visible = this.getVisibleAtoms();
     if (visible.length === 0) {
+      this.panelLayouts = [];
+      this.panelByAtomId.clear();
+      this.constellationConnections = [];
+      this.treeEdges = [];
+      this.treeStats = { ...EMPTY_TREE_STATS };
+      this.activePanelRank = null;
       this.layoutDirty = false;
+      this.emitView();
       return;
     }
-    assignGridTargets(visible, viewportWorldWidth, viewportWorldHeight, baseSize, this.layoutMode);
+    const grouped = assignGridTargets(visible, viewportWorldWidth, viewportWorldHeight, baseSize, this.layoutMode, this.panelScaleByRank);
+    this.panelByAtomId = grouped.panelByAtomId;
+    this.constellationConnections = this.layoutMode === "constellation" ? buildConstellationConnections(visible) : [];
+    this.treeEdges = this.layoutMode === "growth_tree" ? grouped.treeEdges : [];
+    this.treeStats = this.layoutMode === "growth_tree" ? grouped.treeStats : { ...EMPTY_TREE_STATS };
+    this.setPanelLayouts(grouped.panels);
+    if (this.layoutMode === "growth_tree") {
+      this.growthTime = 0;
+      this.growthPlaying = true;
+      if (this.focusMode === "selected") this.focusId = this.selectedId;
+    }
     this.layoutDirty = false;
+    this.emitView();
+  }
+
+  getConnections(): AtomConnection[] {
+    return this.constellationConnections;
+  }
+
+  getTreeEdges(): TreeEdge[] {
+    return this.treeEdges;
   }
 
   needsLayout(): boolean {
@@ -242,7 +496,28 @@ function randomId(): string {
   return crypto.randomUUID();
 }
 
-export function buildMockAtoms(count = 20000): Array<Omit<Atom, "stableKey" | "score" | "sizeTier" | "targetX" | "targetY" | "x" | "y">> {
+export function buildMockAtoms(
+  count = 20000,
+): Array<
+  Omit<
+    Atom,
+    | "stableKey"
+    | "score"
+    | "sizeTier"
+    | "targetX"
+    | "targetY"
+    | "targetZ"
+    | "x"
+    | "y"
+    | "z"
+    | "renderSize"
+    | "treeDepth"
+    | "treeRole"
+    | "growthPhase"
+    | "parentId"
+    | "descendantCount"
+  >
+> {
   const now = Date.now();
   const states: AtomState[] = ["new", "active", "snoozed", "done"];
   return Array.from({ length: count }, (_, i) => {
@@ -276,7 +551,26 @@ function mulberry32(seed: number): () => number {
 export function buildSeededDemoAtoms(
   count = 10000,
   seed = 1337,
-): Array<Omit<Atom, "stableKey" | "score" | "sizeTier" | "targetX" | "targetY" | "x" | "y">> {
+): Array<
+  Omit<
+    Atom,
+    | "stableKey"
+    | "score"
+    | "sizeTier"
+    | "targetX"
+    | "targetY"
+    | "targetZ"
+    | "x"
+    | "y"
+    | "z"
+    | "renderSize"
+    | "treeDepth"
+    | "treeRole"
+    | "growthPhase"
+    | "parentId"
+    | "descendantCount"
+  >
+> {
   const now = Date.now();
   const random = mulberry32(seed);
   const states: AtomState[] = ["new", "active", "snoozed", "done"];

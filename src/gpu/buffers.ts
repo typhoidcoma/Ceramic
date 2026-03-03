@@ -9,6 +9,7 @@ const FLAG_SELECTED = 1 << 4;
 const FLAG_HOVERED = 1 << 5;
 const FLAG_PULSING = 1 << 6;
 const FLAG_ARCHIVED = 1 << 7;
+const FLAG_DIMMED = 1 << 8;
 
 export type GpuBuffers = {
   instanceBuffer: GPUBuffer;
@@ -49,12 +50,22 @@ function colorForAtom(atom: Atom): number {
   return packRgba8(r, g, b, 255);
 }
 
+function clamp(value: number, min: number, max: number): number {
+  if (value <= min) return min;
+  if (value >= max) return max;
+  return value;
+}
+
 export type InstanceWriteInput = {
   atoms: Atom[];
   hoveredId: string | null;
   selectedId: string | null;
   baseSize: number;
   nowSec: number;
+  growthTime: number;
+  focusSet: Set<string>;
+  mode: "growth_tree" | "legacy";
+  projectedById?: Map<string, { x: number; y: number; z: number; scale: number }>;
 };
 
 export function writeInstances(device: GPUDevice, buffer: GPUBuffer, input: InstanceWriteInput): number {
@@ -66,30 +77,43 @@ export function writeInstances(device: GPUDevice, buffer: GPUBuffer, input: Inst
   for (let i = 0; i < count; i += 1) {
     const atom = input.atoms[i];
     const baseOffset = i * (INSTANCE_STRIDE_BYTES / 4);
-    const size = tileSizeForTier(input.baseSize, atom.sizeTier);
+    const projected = input.projectedById?.get(atom.id);
+    const baseAtomSize = atom.renderSize > 0 ? atom.renderSize : tileSizeForTier(input.baseSize, atom.sizeTier);
+    const depthNorm = clamp((projected?.z ?? atom.z) / 420, -1, 1);
+    const growth = clamp01((input.growthTime - atom.treeDepth) * 4.5);
+    const scale = projected?.scale ?? 1;
+    const roleScale = atom.treeRole === "trunk" ? 1.12 : atom.treeRole === "branch" ? 0.92 : 0.8 + atom.score * 0.4;
+    const size = Math.max(3, baseAtomSize * (1 + depthNorm * 0.25) * roleScale * scale * (0.24 + growth * 0.76));
 
     let flags = TYPE_TO_ID.get(atom.type) ?? 0;
     if (atom.id === input.selectedId) flags |= FLAG_SELECTED;
     if (atom.id === input.hoveredId) flags |= FLAG_HOVERED;
     if (atom.urgency > 0.82 || (atom.due !== undefined && atom.due < input.nowSec * 1000)) flags |= FLAG_PULSING;
     if (atom.state === "archived") flags |= FLAG_ARCHIVED;
+    if (input.focusSet.size > 0 && !input.focusSet.has(atom.id)) flags |= FLAG_DIMMED;
 
-    f32[baseOffset + 0] = atom.x;
-    f32[baseOffset + 1] = atom.y;
+    f32[baseOffset + 0] = projected?.x ?? atom.x;
+    f32[baseOffset + 1] = projected?.y ?? atom.y;
     f32[baseOffset + 2] = size;
-    f32[baseOffset + 3] = atom.urgency;
+    f32[baseOffset + 3] = depthNorm;
     u32[baseOffset + 4] = colorForAtom(atom);
     u32[baseOffset + 5] = flags >>> 0;
     f32[baseOffset + 6] = atom.ts / 1000;
     f32[baseOffset + 7] = atom.due ? atom.due / 1000 : -1;
     u32[baseOffset + 8] = atom.stableKey;
-    u32[baseOffset + 9] = 0;
-    u32[baseOffset + 10] = 0;
+    f32[baseOffset + 9] = growth;
+    u32[baseOffset + 10] = atom.treeRole === "trunk" ? 0 : atom.treeRole === "branch" ? 1 : 2;
     u32[baseOffset + 11] = 0;
   }
 
   device.queue.writeBuffer(buffer, 0, array);
   return count;
+}
+
+function clamp01(value: number): number {
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
 }
 
 export type GlobalsWriteInput = {

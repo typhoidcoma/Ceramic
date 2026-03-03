@@ -26,8 +26,16 @@ export type Atom = {
   sizeTier: 0 | 1 | 2;
   targetX: number;
   targetY: number;
+  targetZ: number;
   x: number;
   y: number;
+  z: number;
+  renderSize: number;
+  treeDepth: number;
+  treeRole: "trunk" | "branch" | "leaf";
+  growthPhase: number;
+  parentId?: string;
+  descendantCount: number;
 };
 
 export type AtomPatch = Partial<Omit<Atom, "id" | "stableKey" | "score" | "sizeTier">> & {
@@ -79,8 +87,24 @@ export function scoreToSizeTier(score: number): 0 | 1 | 2 {
 }
 
 export function enrichAtom(
-  atom: Omit<Atom, "stableKey" | "score" | "sizeTier" | "targetX" | "targetY" | "x" | "y"> &
-    Partial<Pick<Atom, "targetX" | "targetY" | "x" | "y">>,
+  atom: Omit<
+    Atom,
+    | "stableKey"
+    | "score"
+    | "sizeTier"
+    | "targetX"
+    | "targetY"
+    | "targetZ"
+    | "x"
+    | "y"
+    | "z"
+    | "renderSize"
+    | "treeDepth"
+    | "treeRole"
+    | "growthPhase"
+    | "descendantCount"
+  > &
+    Partial<Pick<Atom, "targetX" | "targetY" | "targetZ" | "x" | "y" | "z" | "renderSize" | "treeDepth" | "treeRole" | "growthPhase" | "parentId" | "descendantCount">>,
   now: number,
 ): Atom {
   const score = computeScore(atom.ts, atom.urgency, atom.importance, now);
@@ -92,7 +116,15 @@ export function enrichAtom(
     sizeTier: scoreToSizeTier(score),
     targetX: atom.targetX ?? 0,
     targetY: atom.targetY ?? 0,
+    targetZ: atom.targetZ ?? 0,
     x: atom.x ?? 0,
     y: atom.y ?? 0,
+    z: atom.z ?? 0,
+    renderSize: atom.renderSize ?? 0,
+    treeDepth: atom.treeDepth ?? 0,
+    treeRole: atom.treeRole ?? "leaf",
+    growthPhase: atom.growthPhase ?? 1,
+    parentId: atom.parentId,
+    descendantCount: atom.descendantCount ?? 0,
   };
 }

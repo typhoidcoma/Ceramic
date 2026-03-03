@@ -9,54 +9,7 @@ import { AtomStore, buildSeededDemoAtoms } from "./store";
 
 const store = new AtomStore();
 type AppPhase = "loading_session" | "signed_out" | "signed_in_syncing" | "signed_in_ready";
-const LAYOUT_MODES: LayoutMode[] = ["score", "due", "type", "state"];
-type OverlayPanel = { key: number; label: string; col: number; row: number };
-
-function dueLabel(rank: number): string {
-  if (rank === 0) return "Overdue";
-  if (rank === 1) return "Due <24h";
-  if (rank === 2) return "Due <7d";
-  if (rank === 3) return "Due later";
-  return "No due date";
-}
-
-function buildOverlayPanels(mode: LayoutMode): OverlayPanel[] {
-  if (mode === "score") return [];
-  const atoms = store.getVisibleAtoms();
-  if (atoms.length === 0) return [];
-  const now = Date.now();
-  const ranks = new Set<number>();
-
-  for (const atom of atoms) {
-    if (mode === "type") {
-      const idx = ATOM_TYPES.indexOf(atom.type);
-      ranks.add(idx < 0 ? 999 : idx);
-      continue;
-    }
-    if (mode === "state") {
-      const order = ["new", "active", "snoozed", "done", "archived"];
-      const idx = order.indexOf(atom.state);
-      ranks.add(idx < 0 ? 999 : idx);
-      continue;
-    }
-    const delta = (atom.due ?? Number.POSITIVE_INFINITY) - now;
-    if (!Number.isFinite(delta)) ranks.add(4);
-    else if (delta < 0) ranks.add(0);
-    else if (delta < 24 * 60 * 60 * 1000) ranks.add(1);
-    else if (delta < 7 * 24 * 60 * 60 * 1000) ranks.add(2);
-    else ranks.add(3);
-  }
-
-  const sorted = [...ranks].sort((a, b) => a - b);
-  const cols = Math.max(1, Math.ceil(Math.sqrt(sorted.length)));
-  return sorted.map((rank, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const label =
-      mode === "type" ? ATOM_TYPES[rank] ?? "other" : mode === "state" ? ["new", "active", "snoozed", "done", "archived"][rank] ?? "other" : dueLabel(rank);
-    return { key: rank, label, col, row };
-  });
-}
+const LAYOUT_MODES: LayoutMode[] = ["growth_tree", "score", "constellation", "due", "type", "state"];
 
 function useStoreSnapshot() {
   const viewVersion = useSyncExternalStore(
@@ -69,6 +22,7 @@ function useStoreSnapshot() {
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const edgeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const snapshot = useStoreSnapshot();
   const auth = useAuth();
@@ -85,7 +39,7 @@ export function App() {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const renderer = new Renderer(canvas, store);
+    const renderer = new Renderer(canvas, store, edgeCanvasRef.current);
     rendererRef.current = renderer;
     let active = true;
     void renderer.start().catch((error: unknown) => {
@@ -156,9 +110,16 @@ export function App() {
   const onRecenter = () => {
     rendererRef.current?.resetView();
   };
+  const onToggleGrowth = () => {
+    store.toggleGrowthPlaying();
+  };
+  const onRestartGrowth = () => {
+    store.restartGrowth();
+  };
   const isEmpty = phase === "signed_in_ready" && snapshot.visibleCount === 0;
-  const overlayPanels = buildOverlayPanels(snapshot.layoutMode);
-  const overlayCols = Math.max(1, Math.ceil(Math.sqrt(overlayPanels.length)));
+  const overlayPanels = snapshot.panelLayouts;
+  const activePanelLabel = overlayPanels.find((panel) => panel.rank === snapshot.activePanelRank)?.label ?? "-";
+  const cssScale = 1 / (window.devicePixelRatio || 1);
 
   useEffect(() => {
     if (snapshot.layoutMode !== "score") {
@@ -197,7 +158,7 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell mode-${snapshot.layoutMode}`}>
       <div className="top-bar">
         <div className="session">
           <span>{auth.user?.email ?? "unknown user"}</span>
@@ -249,16 +210,64 @@ export function App() {
           value={snapshot.filters.query}
           onChange={(event) => store.setQuery(event.target.value)}
         />
+        {snapshot.layoutMode !== "score" && snapshot.layoutMode !== "constellation" && snapshot.layoutMode !== "growth_tree" && (
+          <span className="status">Grouped: click panel to focus, wheel to zoom panel, double-click reset</span>
+        )}
+        {snapshot.layoutMode === "growth_tree" && (
+          <>
+            <button className={`chip ${snapshot.growthPlaying ? "active" : ""}`} onClick={onToggleGrowth}>
+              {snapshot.growthPlaying ? "Pause Growth" : "Play Growth"}
+            </button>
+            <button className="chip" onClick={onRestartGrowth}>
+              Restart Growth
+            </button>
+            <div className="chips">
+              {(["slow", "normal", "fast"] as const).map((speed) => (
+                <button
+                  key={speed}
+                  className={`chip ${snapshot.growthSpeed === speed ? "active" : ""}`}
+                  onClick={() => store.setGrowthSpeed(speed)}
+                >
+                  {speed}
+                </button>
+              ))}
+            </div>
+            <div className="chips">
+              {(["off", "selected"] as const).map((mode) => (
+                <button key={mode} className={`chip ${snapshot.focusMode === mode ? "active" : ""}`} onClick={() => store.setFocusMode(mode)}>
+                  focus {mode}
+                </button>
+              ))}
+            </div>
+            <span className="status">Life Tree: left drag orbit, right-drag/shift pan, wheel dolly</span>
+          </>
+        )}
+        {snapshot.layoutMode === "constellation" && (
+          <span className="status">Constellation: drag to pan, wheel to zoom, blue links=time, amber=likeness</span>
+        )}
         {phase === "signed_in_syncing" && <span className="status">Syncing...</span>}
         {syncError && <span className="status error">Sync error: {syncError}</span>}
         <span className="status">phase: {phase}</span>
       </div>
 
       <canvas ref={canvasRef} className="grid-canvas" />
-      {overlayPanels.length > 1 && (
-        <div className="group-overlay" style={{ gridTemplateColumns: `repeat(${overlayCols}, 1fr)` }}>
+      <canvas ref={edgeCanvasRef} className="edge-canvas" />
+      {overlayPanels.length > 0 &&
+        snapshot.layoutMode !== "score" &&
+        snapshot.layoutMode !== "constellation" &&
+        snapshot.layoutMode !== "growth_tree" && (
+        <div className="group-overlay">
           {overlayPanels.map((panel) => (
-            <div key={panel.key} className="group-panel">
+            <div
+              key={panel.rank}
+              className={`group-panel ${snapshot.activePanelRank === panel.rank ? "active" : "inactive"}`}
+              style={{
+                left: `calc(50% + ${(panel.x - panel.width * 0.5) * cssScale}px)`,
+                top: `calc(50% - ${(panel.y + panel.height * 0.5) * cssScale}px)`,
+                width: `${panel.width * cssScale}px`,
+                height: `${panel.height * cssScale}px`,
+              }}
+            >
               <span className="group-tag">{panel.label}</span>
             </div>
           ))}
@@ -298,6 +307,14 @@ export function App() {
               <dd>{new Date(selected.ts).toLocaleString()}</dd>
               <dt>Due</dt>
               <dd>{selected.due ? new Date(selected.due).toLocaleString() : "-"}</dd>
+              <dt>Tree role</dt>
+              <dd>{selected.treeRole}</dd>
+              <dt>Tree depth</dt>
+              <dd>{selected.treeDepth.toFixed(3)}</dd>
+              <dt>Parent</dt>
+              <dd>{selected.parentId ?? "-"}</dd>
+              <dt>Descendants</dt>
+              <dd>{selected.descendantCount}</dd>
             </dl>
             <h3>Title</h3>
             <p>{selected.title ?? "-"}</p>
@@ -310,7 +327,14 @@ export function App() {
       <div className="debug">
         <div>fps: {snapshot.fps.toFixed(1)}</div>
         <div>tiles: {snapshot.visibleCount.toLocaleString()} / {snapshot.totalCount.toLocaleString()}</div>
+        <div>links: {snapshot.connectionCount.toLocaleString()}</div>
+        <div>
+          tree: t {snapshot.treeStats.trunkCount} / b {snapshot.treeStats.branchCount} / l {snapshot.treeStats.leafCount}
+        </div>
+        <div>growth: {(snapshot.growthTime * 100).toFixed(0)}%</div>
+        <div>focus: {snapshot.focusId ?? "-"}</div>
         <div>hovered: {snapshot.hoveredId ?? "-"}</div>
+        <div>active panel: {activePanelLabel}</div>
       </div>
     </div>
   );
