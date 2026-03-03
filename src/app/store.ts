@@ -28,6 +28,7 @@ export class AtomStore {
   private visibleDirty = true;
   private layoutDirty = true;
   private fps = 0;
+  private viewVersion = 0;
   private filters: Filters = {
     types: new Set(ATOM_TYPES),
     states: new Set(["new", "active", "snoozed", "done"]),
@@ -53,6 +54,10 @@ export class AtomStore {
       fps: this.fps,
       filters: this.filters,
     };
+  }
+
+  getViewVersion(): number {
+    return this.viewVersion;
   }
 
   setFps(fps: number): void {
@@ -214,6 +219,7 @@ export class AtomStore {
   }
 
   private emitView(): void {
+    this.viewVersion += 1;
     for (const listener of this.viewListeners) listener();
   }
 }

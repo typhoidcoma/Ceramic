@@ -10,11 +10,12 @@ const store = new AtomStore();
 type AppPhase = "loading_session" | "signed_out" | "signed_in_syncing" | "signed_in_ready";
 
 function useStoreSnapshot() {
-  return useSyncExternalStore(
+  const viewVersion = useSyncExternalStore(
     (cb) => store.subscribeView(cb),
-    () => store.getSnapshot(),
-    () => store.getSnapshot(),
+    () => store.getViewVersion(),
+    () => store.getViewVersion(),
   );
+  return useMemo(() => store.getSnapshot(), [viewVersion]);
 }
 
 export function App() {
@@ -23,17 +24,27 @@ export function App() {
   const auth = useAuth();
   const [phase, setPhase] = useState<AppPhase>("loading_session");
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [rendererError, setRendererError] = useState<string | null>(null);
   const isSignedInView = phase === "signed_in_syncing" || phase === "signed_in_ready";
 
   useEffect(() => {
-    if (!isSignedInView) return;
+    if (!isSignedInView) {
+      setRendererError(null);
+      return;
+    }
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const renderer = new Renderer(canvas, store);
-    void renderer.start();
+    let active = true;
+    void renderer.start().catch((error: unknown) => {
+      if (!active) return;
+      const message = error instanceof Error ? error.message : "Unknown renderer error.";
+      setRendererError(message);
+    });
 
     return () => {
+      active = false;
       renderer.stop();
     };
   }, [isSignedInView]);
@@ -101,6 +112,21 @@ export function App() {
     return <AuthGate auth={auth} />;
   }
 
+  if (rendererError) {
+    return (
+      <div className="auth-gate">
+        <div className="auth-card">
+          <h1>Renderer Error</h1>
+          <p className="error">{rendererError}</p>
+          <p className="muted">
+            Try Chrome or Edge with WebGPU enabled, then reload. You can also sign out and retry the session.
+          </p>
+          <button onClick={onSignOut}>Sign out</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <div className="top-bar">
@@ -140,6 +166,7 @@ export function App() {
         />
         {phase === "signed_in_syncing" && <span className="status">Syncing...</span>}
         {syncError && <span className="status error">Sync error: {syncError}</span>}
+        <span className="status">phase: {phase}</span>
       </div>
 
       <canvas ref={canvasRef} className="grid-canvas" />
