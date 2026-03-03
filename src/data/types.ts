@@ -1,0 +1,98 @@
+export type AtomType =
+  | "task"
+  | "date"
+  | "message"
+  | "email"
+  | "image"
+  | "file"
+  | "event"
+  | "custom";
+
+export type AtomState = "new" | "active" | "snoozed" | "done" | "archived";
+
+export type Atom = {
+  id: string;
+  type: AtomType;
+  ts: number;
+  due?: number;
+  urgency: number;
+  importance: number;
+  state: AtomState;
+  title?: string;
+  preview?: string;
+  payload?: unknown;
+  score: number;
+  stableKey: number;
+  sizeTier: 0 | 1 | 2;
+  targetX: number;
+  targetY: number;
+  x: number;
+  y: number;
+};
+
+export type AtomPatch = Partial<Omit<Atom, "id" | "stableKey" | "score" | "sizeTier">> & {
+  id: string;
+};
+
+export const ATOM_TYPES: AtomType[] = [
+  "task",
+  "date",
+  "message",
+  "email",
+  "image",
+  "file",
+  "event",
+  "custom",
+];
+
+export const ATOM_STATES: AtomState[] = ["new", "active", "snoozed", "done", "archived"];
+
+export const TYPE_TO_ID = new Map<AtomType, number>(ATOM_TYPES.map((type, i) => [type, i]));
+
+export const HALF_LIFE_MS = 1000 * 60 * 60 * 24 * 7;
+
+export function clamp01(value: number): number {
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+
+export function hashStringU32(input: string): number {
+  let hash = 2166136261 >>> 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+export function computeScore(ts: number, urgency: number, importance: number, now: number): number {
+  const age = Math.max(0, now - ts);
+  const recency = Math.exp(-age / HALF_LIFE_MS);
+  return 0.55 * clamp01(urgency) + 0.35 * clamp01(importance) + 0.1 * recency;
+}
+
+export function scoreToSizeTier(score: number): 0 | 1 | 2 {
+  if (score > 0.85) return 2;
+  if (score > 0.65) return 1;
+  return 0;
+}
+
+export function enrichAtom(
+  atom: Omit<Atom, "stableKey" | "score" | "sizeTier" | "targetX" | "targetY" | "x" | "y"> &
+    Partial<Pick<Atom, "targetX" | "targetY" | "x" | "y">>,
+  now: number,
+): Atom {
+  const score = computeScore(atom.ts, atom.urgency, atom.importance, now);
+  const stableKey = hashStringU32(atom.id);
+  return {
+    ...atom,
+    score,
+    stableKey,
+    sizeTier: scoreToSizeTier(score),
+    targetX: atom.targetX ?? 0,
+    targetY: atom.targetY ?? 0,
+    x: atom.x ?? 0,
+    y: atom.y ?? 0,
+  };
+}
