@@ -21,6 +21,9 @@ export type Atom = {
   title?: string;
   preview?: string;
   payload?: unknown;
+  sensitivity?: "low" | "medium" | "high";
+  visibility?: "masked" | "revealed";
+  labels?: string[];
   score: number;
   stableKey: number;
   sizeTier: 0 | 1 | 2;
@@ -41,6 +44,14 @@ export type Atom = {
 export type AtomPatch = Partial<Omit<Atom, "id" | "stableKey" | "score" | "sizeTier">> & {
   id: string;
 };
+
+export type TimelineBucket = {
+  key: string;
+  label: string;
+  items: Atom[];
+};
+
+export type TimelineSortMode = "recent" | "due" | "importance";
 
 export const ATOM_TYPES: AtomType[] = [
   "task",

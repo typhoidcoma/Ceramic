@@ -1,4 +1,4 @@
-import { ATOM_TYPES, type Atom, type AtomPatch, type AtomState, type AtomType, enrichAtom } from "../data/types";
+import { ATOM_TYPES, type Atom, type AtomPatch, type AtomState, type AtomType, type TimelineBucket, type TimelineSortMode, enrichAtom } from "../data/types";
 import { buildConstellationConnections, type AtomConnection } from "../layout/connections";
 import { assignGridTargets, type FocusMode, type LayoutMode, type PanelLayout, type TreeEdge, type TreeStats } from "../layout/layout";
 
@@ -25,6 +25,9 @@ type Snapshot = {
   growthSpeed: "slow" | "normal" | "fast";
   focusMode: FocusMode;
   focusId: string | null;
+  globalReveal: boolean;
+  vizStyle?: "neocortex";
+  vizQualityAuto?: boolean;
 };
 
 type Listener = () => void;
@@ -60,6 +63,8 @@ export class AtomStore {
   private growthSpeed: "slow" | "normal" | "fast" = "normal";
   private focusMode: FocusMode = "selected";
   private focusId: string | null = null;
+  private revealedIds = new Set<string>();
+  private globalReveal = false;
   private filters: Filters = {
     types: new Set(ATOM_TYPES),
     states: new Set(["new", "active", "snoozed", "done"]),
@@ -94,6 +99,9 @@ export class AtomStore {
       growthSpeed: this.growthSpeed,
       focusMode: this.focusMode,
       focusId: this.focusId,
+      globalReveal: this.globalReveal,
+      vizStyle: "neocortex",
+      vizQualityAuto: true,
     };
   }
 
@@ -135,6 +143,22 @@ export class AtomStore {
     if (this.layoutMode === "growth_tree" && this.focusMode === "selected") {
       this.focusId = id;
     }
+    this.emit();
+  }
+
+  isAtomRevealed(id: string): boolean {
+    return this.globalReveal || this.revealedIds.has(id);
+  }
+
+  setAtomRevealed(id: string, revealed: boolean): void {
+    if (revealed) this.revealedIds.add(id);
+    else this.revealedIds.delete(id);
+    this.emit();
+  }
+
+  setGlobalReveal(enabled: boolean): void {
+    if (this.globalReveal === enabled) return;
+    this.globalReveal = enabled;
     this.emit();
   }
 
@@ -403,6 +427,8 @@ export class AtomStore {
     this.selectedId = null;
     this.hoveredId = null;
     this.focusId = null;
+    this.revealedIds.clear();
+    this.globalReveal = false;
     this.visibleAtomsCache = [];
     this.panelLayouts = [];
     this.panelByAtomId.clear();
@@ -416,6 +442,55 @@ export class AtomStore {
     this.visibleDirty = true;
     this.layoutDirty = true;
     this.emit();
+  }
+
+  getTimelineBuckets(now: number, mode: TimelineSortMode): TimelineBucket[] {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+    const todayMs = startOfToday.getTime();
+    const visible = [...this.getVisibleAtoms()];
+    const sorted = visible.sort((a, b) => {
+      if (mode === "importance") {
+        if (b.importance !== a.importance) return b.importance - a.importance;
+        if (b.score !== a.score) return b.score - a.score;
+        return b.ts - a.ts;
+      }
+      if (mode === "due") {
+        const aDue = a.due ?? Number.POSITIVE_INFINITY;
+        const bDue = b.due ?? Number.POSITIVE_INFINITY;
+        if (aDue !== bDue) return aDue - bDue;
+        return b.ts - a.ts;
+      }
+      if (b.ts !== a.ts) return b.ts - a.ts;
+      return a.stableKey - b.stableKey;
+    });
+
+    const buckets = new Map<string, TimelineBucket>([
+      ["today", { key: "today", label: "Today", items: [] }],
+      ["yesterday", { key: "yesterday", label: "Yesterday", items: [] }],
+      ["last7", { key: "last7", label: "Last 7 Days", items: [] }],
+      ["last30", { key: "last30", label: "Last 30 Days", items: [] }],
+      ["older", { key: "older", label: "Older", items: [] }],
+    ]);
+
+    for (const atom of sorted) {
+      const age = todayMs - atom.ts;
+      const key =
+        age < dayMs ? "today" : age < 2 * dayMs ? "yesterday" : age < 7 * dayMs ? "last7" : age < 30 * dayMs ? "last30" : "older";
+      const bucket = buckets.get(key);
+      if (bucket) bucket.items.push(atom);
+    }
+
+    return [...buckets.values()].filter((bucket) => bucket.items.length > 0);
+  }
+
+  setSelectedByIndex(bucketKey: string, itemIndex: number): void {
+    const buckets = this.getTimelineBuckets(Date.now(), "recent");
+    const bucket = buckets.find((entry) => entry.key === bucketKey);
+    if (!bucket) return;
+    const next = bucket.items[itemIndex];
+    this.setSelected(next?.id ?? null);
   }
 
   getVisibleAtoms(): Atom[] {
@@ -956,6 +1031,19 @@ export function buildSeededDemoAtoms(
 
     threadOrdinal += 1;
   }
-
+  for (const atom of atoms) {
+    const tags: string[] = [];
+    const ageMs = now - atom.ts;
+    if (ageMs < DAY_MS) tags.push("today");
+    if (ageMs < 3 * DAY_MS) tags.push("recently_updated");
+    if (atom.due !== undefined && atom.due < now) tags.push("overdue");
+    if (atom.urgency > 0.78 || atom.importance > 0.84) tags.push("high_attention");
+    const basePayload =
+      atom.payload && typeof atom.payload === "object" ? (atom.payload as Record<string, unknown>) : {};
+    atom.payload = { ...basePayload, tags };
+    atom.labels = tags;
+    atom.visibility = "masked";
+    atom.sensitivity = atom.type === "email" || atom.type === "message" ? "high" : atom.type === "file" ? "medium" : "low";
+  }
   return atoms;
 }

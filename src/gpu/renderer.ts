@@ -1,4 +1,4 @@
-import { easePosition, TILE_GUTTER_PX, type LayoutMode, type PanelLayout } from "../layout/layout";
+import { easePosition, TILE_GUTTER_PX, type LayoutMode, type PanelLayout, type TreeEdge } from "../layout/layout";
 import { SpatialHash } from "../layout/spatialHash";
 import type { AtomStore } from "../app/store";
 import type { Atom } from "../data/types";
@@ -12,7 +12,11 @@ const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 5;
 const MIN_PANEL_SCALE = 0.85;
 const MAX_PANEL_SCALE = 2.4;
-const MAX_TREE_EDGES_DRAWN = 30000;
+const MAX_TREE_EDGES_DRAWN = 12000;
+type RenderMode = "ambient_leaf" | "neocortex";
+type ActivationSource = "selection" | "manual";
+type CortexQualityTier = "ultra" | "high" | "balanced" | "safe";
+type ActivationEvent = { sourceId: string; t0: number; seed: number };
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
@@ -31,10 +35,28 @@ export class Renderer {
   private orbitYaw = 0.25;
   private orbitPitch = 0.28;
   private orbitDistance = 760;
+  private renderMode: RenderMode = "neocortex";
+  private activationSource: ActivationSource = "selection";
+  private qualityTier: CortexQualityTier = "ultra";
+  private qualitySwitchUpCount = 0;
+  private qualitySwitchDownCount = 0;
+  private activationEvent: ActivationEvent | null = null;
+  private activationIntensities = new Map<string, number>();
   private spatialHash = new SpatialHash();
   private hoveredLastRebuild = -1;
   private projectedById = new Map<string, { x: number; y: number; z: number; scale: number; screenX: number; screenY: number; radius: number }>();
   private growthRenderOrder: string[] = [];
+  private ambientFocusId: string | null = null;
+  private ambientHoverId: string | null = null;
+  private cachedBackdrop: HTMLCanvasElement | null = null;
+  private cachedBackdropW = 0;
+  private cachedBackdropH = 0;
+  private cachedEdgesRef: TreeEdge[] | null = null;
+  private cachedSortedEdges: TreeEdge[] = [];
+  private cachedAdjacencyRef: TreeEdge[] | null = null;
+  private cachedAdjacency = new Map<string, string[]>();
+  private lastContextFocusId: string | null = null;
+  private lastContextHoverId: string | null = null;
   private dragState: {
     active: boolean;
     mode: "none" | "pan2d" | "orbit" | "pan3d" | "panel";
@@ -57,11 +79,34 @@ export class Renderer {
   private globalsBindGroup: GPUBindGroup | null = null;
   private instancesBindGroup: GPUBindGroup | null = null;
 
-  constructor(canvas: HTMLCanvasElement, store: AtomStore, edgeCanvas?: HTMLCanvasElement | null) {
+  constructor(canvas: HTMLCanvasElement, store: AtomStore, edgeCanvas?: HTMLCanvasElement | null, renderMode: RenderMode = "ambient_leaf") {
     this.canvas = canvas;
     this.edgeCanvas = edgeCanvas ?? null;
     this.store = store;
     this.edgeCtx = this.edgeCanvas?.getContext("2d") ?? null;
+    this.renderMode = renderMode;
+  }
+
+  setAmbientFocus(atomId: string | null): void {
+    const changed = this.ambientFocusId !== atomId;
+    this.ambientFocusId = atomId;
+    if (changed && atomId && this.activationSource === "selection") {
+      this.activationEvent = { sourceId: atomId, t0: performance.now(), seed: hashFast(atomId) };
+    }
+  }
+
+  setAmbientHover(atomId: string | null): void {
+    this.ambientHoverId = atomId;
+  }
+
+  setActivationSource(source: ActivationSource): void {
+    this.activationSource = source;
+  }
+
+  setRenderStyle(style: RenderMode): void {
+    if (this.renderMode === style) return;
+    this.renderMode = style;
+    this.cachedBackdrop = null;
   }
 
   async start(): Promise<void> {
@@ -130,12 +175,27 @@ export class Renderer {
 
     if (layoutMode === "growth_tree") {
       this.store.tickGrowth(dtSec);
+      if (this.renderMode === "ambient_leaf" || this.renderMode === "neocortex") {
+        this.orbitYaw += dtSec * 0.045;
+        this.orbitPitch = 0.24 + Math.sin(t * 0.00016) * 0.06;
+      }
     }
 
     const visible = this.store.getVisibleAtoms();
+    this.updateQualityTier(snapshot.fps);
     easePosition(visible, dtSec);
     this.updateProjectedCache(layoutMode, visible);
-    this.drawContextLayers(layoutMode, visible);
+    const tierParams = this.getTierParams(visible.length);
+    const contextStride = tierParams.contextStride;
+    const contextFocus = this.ambientFocusId ?? snapshot.selectedId;
+    const contextHover = this.ambientHoverId ?? snapshot.hoveredId;
+    const forceContext =
+      contextFocus !== this.lastContextFocusId || contextHover !== this.lastContextHoverId || this.frameCounter < 2;
+    if (forceContext || this.frameCounter % contextStride === 0) {
+      this.drawContextLayers(layoutMode, visible);
+      this.lastContextFocusId = contextFocus;
+      this.lastContextHoverId = contextHover;
+    }
 
     const rebuildEvery = 4;
     if (layoutMode !== "growth_tree" && (this.frameCounter % rebuildEvery === 0 || this.hoveredLastRebuild !== visible.length)) {
@@ -465,12 +525,31 @@ export class Renderer {
   }
 
   private drawLeafBackdrop(ctx: CanvasRenderingContext2D): void {
+    if (!this.cachedBackdrop || this.cachedBackdropW !== this.canvas.width || this.cachedBackdropH !== this.canvas.height) {
+      const buffer = document.createElement("canvas");
+      buffer.width = this.canvas.width;
+      buffer.height = this.canvas.height;
+      const bctx = buffer.getContext("2d");
+      if (!bctx) return;
+      this.drawLeafBackdropInto(bctx, buffer.width, buffer.height);
+      this.cachedBackdrop = buffer;
+      this.cachedBackdropW = buffer.width;
+      this.cachedBackdropH = buffer.height;
+    }
+    ctx.drawImage(this.cachedBackdrop, 0, 0);
+  }
+
+  private drawLeafBackdropInto(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    if (this.renderMode === "neocortex") {
+      this.drawNeocortexBackdropInto(ctx, width, height);
+      return;
+    }
     ctx.save();
-    const cy = this.canvas.height * 0.5;
-    const leftX = this.canvas.width * 0.06;
-    const rightX = this.canvas.width * 0.94;
+    const cy = height * 0.5;
+    const leftX = width * 0.06;
+    const rightX = width * 0.94;
     const length = rightX - leftX;
-    const halfH = Math.min(this.canvas.height * 0.36, 290);
+    const halfH = Math.min(height * 0.36, 290);
 
     const grad = ctx.createLinearGradient(leftX, cy, rightX, cy);
     grad.addColorStop(0, "rgba(56,118,77,0.10)");
@@ -561,31 +640,114 @@ export class Renderer {
     ctx.restore();
   }
 
+  private drawNeocortexBackdropInto(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    ctx.save();
+    const cy = height * 0.5;
+    const leftX = width * 0.05;
+    const rightX = width * 0.95;
+    const length = rightX - leftX;
+    const halfH = Math.min(height * 0.38, 320);
+    const grad = ctx.createLinearGradient(leftX, cy, rightX, cy);
+    grad.addColorStop(0, "rgba(24,48,78,0.22)");
+    grad.addColorStop(0.35, "rgba(42,78,122,0.20)");
+    grad.addColorStop(0.75, "rgba(26,66,104,0.18)");
+    grad.addColorStop(1, "rgba(18,40,70,0.14)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(leftX, cy);
+    ctx.bezierCurveTo(leftX + length * 0.12, cy - halfH * 0.18, leftX + length * 0.40, cy - halfH, rightX - length * 0.06, cy - halfH * 0.15);
+    ctx.bezierCurveTo(rightX + 8, cy - halfH * 0.05, rightX + 8, cy + halfH * 0.05, rightX - length * 0.06, cy + halfH * 0.15);
+    ctx.bezierCurveTo(leftX + length * 0.40, cy + halfH, leftX + length * 0.12, cy + halfH * 0.18, leftX, cy);
+    ctx.closePath();
+    ctx.fill();
+
+    // Sulci/gyri contour bands
+    for (let i = 0; i < 22; i += 1) {
+      const t = i / 21;
+      const x = leftX + length * (0.09 + t * 0.84);
+      const wing = halfH * Math.pow(Math.sin(Math.PI * t), 0.82);
+      const phase = t * 9.3;
+      ctx.strokeStyle = `rgba(132,192,255,${0.028 + (1 - Math.abs(t - 0.5) * 1.4) * 0.05})`;
+      ctx.lineWidth = 0.8 + (1 - Math.abs(t - 0.5) * 1.6) * 0.7;
+      ctx.beginPath();
+      ctx.moveTo(x - 14, cy - wing * 0.92);
+      for (let s = 0; s <= 10; s += 1) {
+        const p = s / 10;
+        const sx = x + (p - 0.5) * 28 + Math.sin(phase + p * 10) * (2 + wing * 0.02);
+        const sy = cy - wing + p * wing * 2 + Math.sin(phase * 1.8 + p * 18) * 3;
+        ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
+    }
+
+    // Midline hint
+    ctx.strokeStyle = "rgba(176,224,255,0.18)";
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(leftX + 6, cy);
+    ctx.quadraticCurveTo(leftX + length * 0.42, cy + 8, rightX - 10, cy - 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   private drawTreeEdges(ctx: CanvasRenderingContext2D, visible: Atom[]): void {
     const atomsById = new Map(visible.map((atom) => [atom.id, atom]));
+    const snapshot = this.store.getSnapshot();
+    const focusId = this.ambientFocusId ?? snapshot.selectedId;
+    const hoverId = this.ambientHoverId ?? snapshot.hoveredId;
+    const focusedThread = this.threadOf(focusId, atomsById);
     const focusSet = this.store.getSnapshot().focusMode === "selected" ? this.store.getFocusSet() : new Set<string>();
-    const edges = this.store
-      .getTreeEdges()
-      .slice(0, MAX_TREE_EDGES_DRAWN)
-      .sort((a, b) => b.strength - a.strength);
+    const edgeRef = this.store.getTreeEdges();
+    if (this.cachedEdgesRef !== edgeRef) {
+      this.cachedEdgesRef = edgeRef;
+      this.cachedSortedEdges = [...edgeRef].sort((a, b) => b.strength - a.strength);
+    }
+    this.ensureAdjacency(edgeRef);
+    const tierParams = this.getTierParams(visible.length);
+    const budget = Math.min(tierParams.maxEdges, MAX_TREE_EDGES_DRAWN);
+    const edges = this.cachedSortedEdges.slice(0, budget);
+    this.activationIntensities = this.computeActivationIntensities(
+      focusId,
+      focusedThread,
+      atomsById,
+      tierParams.maxCortexNodes,
+      performance.now(),
+    );
+    this.drawCortexCloud(ctx, this.activationIntensities, atomsById, tierParams);
+
+    const edgesByIntensity = [...edges].sort((a, b) => {
+      const ai = Math.max(this.activationIntensities.get(a.parentId) ?? 0, this.activationIntensities.get(a.childId) ?? 0) * a.strength;
+      const bi = Math.max(this.activationIntensities.get(b.parentId) ?? 0, this.activationIntensities.get(b.childId) ?? 0) * b.strength;
+      return ai - bi;
+    });
 
     ctx.save();
     ctx.globalCompositeOperation = "source-over";
-    for (const edge of edges) {
+    for (const edge of edgesByIntensity) {
       const aProj = this.projectedById.get(edge.parentId);
       const bProj = this.projectedById.get(edge.childId);
       if (!aProj || !bProj) continue;
       const a = atomsById.get(edge.parentId);
       const b = atomsById.get(edge.childId);
       if (!a || !b) continue;
+      const focusEdge = focusId === edge.parentId || focusId === edge.childId;
+      const hoverEdge = hoverId === edge.parentId || hoverId === edge.childId;
+      const edgeThread = this.threadOf(edge.parentId, atomsById);
+      const inFocusThread = focusedThread && edgeThread && focusedThread === edgeThread;
 
       const focused = focusSet.size === 0 || (focusSet.has(edge.parentId) && focusSet.has(edge.childId));
       const baseAlpha = focused ? 0.095 : 0.025;
       const depth = Math.max(0, Math.min(1, 1 - Math.min(aProj.z, bProj.z) / 1200));
-      const alpha = baseAlpha + edge.strength * 0.22 * depth;
-      const width = (a.treeRole === "trunk" || b.treeRole === "trunk" ? 2.3 : 1.1) * (0.44 + depth);
-      ctx.strokeStyle =
-        a.treeRole === "trunk" || b.treeRole === "trunk" ? `rgba(118,176,98,${alpha})` : `rgba(132,224,154,${alpha})`;
+      const ai = this.activationIntensities.get(edge.parentId) ?? 0;
+      const bi = this.activationIntensities.get(edge.childId) ?? 0;
+      const wave = Math.max(ai, bi) * edge.strength;
+      const pulse = 0.86 + 0.14 * (0.5 + 0.5 * Math.sin(performance.now() * 0.003 + (a.stableKey % 97)));
+      const emphasis = focusEdge ? 1.34 : hoverEdge ? 1.14 : inFocusThread ? 1.12 : 1;
+      const alpha = (baseAlpha + edge.strength * 0.16 * depth + wave * 0.6) * emphasis * pulse;
+      const width = (a.treeRole === "trunk" || b.treeRole === "trunk" ? 2.2 : 1.0) * (0.42 + depth) * (1 + wave * 0.55) * emphasis;
+      const t = performance.now() * 0.0024 + (a.stableKey ^ b.stableKey) * 0.00011;
+      const heat = Math.min(1, Math.max(0, wave * 0.95 + 0.12 * (0.5 + 0.5 * Math.sin(t))));
+      ctx.strokeStyle = this.fmriColor(heat, Math.min(0.98, alpha));
       ctx.lineWidth = width;
 
       const midX0 = (aProj.screenX + bProj.screenX) * 0.5;
@@ -599,6 +761,191 @@ export class Renderer {
       ctx.stroke();
     }
     ctx.restore();
+    this.drawAmbientPulse(ctx, focusId, atomsById, "rgba(198,255,156,0.30)");
+    this.drawAmbientPulse(ctx, hoverId, atomsById, "rgba(146,232,255,0.22)");
+  }
+
+  private drawCortexCloud(
+    ctx: CanvasRenderingContext2D,
+    intensities: Map<string, number>,
+    atomsById: Map<string, Atom>,
+    tierParams: { glowPasses: number },
+  ): void {
+    if (intensities.size === 0) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const [id, intensity] of intensities) {
+      if (intensity < 0.03) continue;
+      const atom = atomsById.get(id);
+      const proj = atom ? this.projectedById.get(id) : undefined;
+      if (!atom || !proj) continue;
+      const t = performance.now() * 0.0036 + (atom.stableKey % 131) * 0.02;
+      const pulse = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(t));
+      const heat = Math.min(1, Math.max(0, intensity * 0.92 + 0.1 * (0.5 + 0.5 * Math.sin(t * 0.7))));
+      const radiusBase = Math.max(14, proj.radius * (1.8 + intensity * 3.4 + pulse * 0.9));
+      for (let pass = 0; pass < tierParams.glowPasses; pass += 1) {
+        const radius = radiusBase * (1 + pass * 0.38);
+        const gradient = ctx.createRadialGradient(proj.screenX, proj.screenY, 0, proj.screenX, proj.screenY, radius);
+        gradient.addColorStop(0, this.fmriColor(heat, 0.20 - pass * 0.05));
+        gradient.addColorStop(0.5, this.fmriColor(Math.max(0, heat - 0.1), 0.09 - pass * 0.02));
+        gradient.addColorStop(1, "rgba(28,52,78,0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(proj.screenX, proj.screenY, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  private computeActivationIntensities(
+    focusId: string | null,
+    focusedThread: string | null,
+    atomsById: Map<string, Atom>,
+    maxNodes: number,
+    nowMs: number,
+  ): Map<string, number> {
+    const out = new Map<string, number>();
+    const event = this.activationEvent;
+    if (!focusId && !event) return out;
+    const sourceId = focusId ?? event?.sourceId ?? null;
+    if (!sourceId) return out;
+    if (!event || event.sourceId !== sourceId) {
+      this.activationEvent = { sourceId, t0: nowMs, seed: hashFast(sourceId) };
+    }
+    const active = this.activationEvent;
+    if (!active) return out;
+    const dt = Math.max(0, nowMs - active.t0);
+    const tau = 2200;
+    const waveSpeed = 0.0038; // hops per ms
+    const waveFront = Math.min(22, dt * waveSpeed);
+    const sigma = 2.4;
+    const decay = Math.exp(-dt / tau);
+
+    const visited = new Set<string>([active.sourceId]);
+    const queue: Array<{ id: string; hop: number }> = [{ id: active.sourceId, hop: 0 }];
+    while (queue.length > 0 && out.size < maxNodes) {
+      const current = queue.shift();
+      if (!current) break;
+      const hopDist = Math.abs(current.hop - waveFront);
+      const ring = Math.exp(-(hopDist * hopDist) / (2 * sigma * sigma));
+      const threadBoost = focusedThread && this.threadOf(current.id, atomsById) === focusedThread ? 1.2 : 1;
+      const jitter = 0.85 + 0.15 * (0.5 + 0.5 * Math.sin(dt * 0.005 + ((hashFast(current.id) ^ active.seed) % 251) * 0.07));
+      const intensity = Math.min(1, ring * decay * threadBoost * jitter);
+      if (intensity > 0.015) out.set(current.id, intensity);
+      const neighbors = this.cachedAdjacency.get(current.id) ?? [];
+      for (const neighbor of neighbors) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        queue.push({ id: neighbor, hop: current.hop + 1 });
+      }
+    }
+
+    // faint global baseline so wave has a whole-network feel without overpowering
+    if (focusedThread) {
+      for (const atom of atomsById.values()) {
+        if (out.size >= maxNodes) break;
+        if (this.threadOf(atom.id, atomsById) === focusedThread && !out.has(atom.id)) {
+          out.set(atom.id, 0.06 * decay);
+        }
+      }
+    }
+    return out;
+  }
+
+  private ensureAdjacency(edges: TreeEdge[]): void {
+    if (this.cachedAdjacencyRef === edges) return;
+    this.cachedAdjacencyRef = edges;
+    this.cachedAdjacency = new Map<string, string[]>();
+    for (const edge of edges) {
+      const a = this.cachedAdjacency.get(edge.parentId);
+      if (a) a.push(edge.childId);
+      else this.cachedAdjacency.set(edge.parentId, [edge.childId]);
+      const b = this.cachedAdjacency.get(edge.childId);
+      if (b) b.push(edge.parentId);
+      else this.cachedAdjacency.set(edge.childId, [edge.parentId]);
+    }
+  }
+
+  private fmriColor(heat01: number, alpha: number): string {
+    const h = Math.max(0, Math.min(1, heat01));
+    const r =
+      h < 0.33 ? Math.floor(54 + h * 3 * 46) : h < 0.66 ? Math.floor(100 + (h - 0.33) * 3 * 155) : Math.floor(255);
+    const g =
+      h < 0.33 ? Math.floor(120 + h * 3 * 95) : h < 0.66 ? Math.floor(215 - (h - 0.33) * 3 * 50) : Math.floor(165 - (h - 0.66) * 3 * 58);
+    const b =
+      h < 0.33 ? Math.floor(255 - h * 3 * 35) : h < 0.66 ? Math.floor(220 - (h - 0.33) * 3 * 170) : Math.floor(65 - (h - 0.66) * 3 * 22);
+    return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+  }
+
+  private updateQualityTier(fps: number): void {
+    const next: CortexQualityTier = fps >= 58 ? "ultra" : fps >= 52 ? "high" : fps >= 45 ? "balanced" : "safe";
+    if (next === this.qualityTier) {
+      this.qualitySwitchDownCount = 0;
+      this.qualitySwitchUpCount = 0;
+      return;
+    }
+    const isDowngrade = this.tierRank(next) < this.tierRank(this.qualityTier);
+    if (isDowngrade) {
+      this.qualitySwitchDownCount += 1;
+      this.qualitySwitchUpCount = 0;
+      if (this.qualitySwitchDownCount >= 3) {
+        this.qualityTier = next;
+        this.qualitySwitchDownCount = 0;
+      }
+      return;
+    }
+    this.qualitySwitchUpCount += 1;
+    this.qualitySwitchDownCount = 0;
+    if (this.qualitySwitchUpCount >= 4) {
+      this.qualityTier = next;
+      this.qualitySwitchUpCount = 0;
+    }
+  }
+
+  private tierRank(tier: CortexQualityTier): number {
+    if (tier === "ultra") return 4;
+    if (tier === "high") return 3;
+    if (tier === "balanced") return 2;
+    return 1;
+  }
+
+  private getTierParams(visibleCount: number): { contextStride: number; maxEdges: number; maxCortexNodes: number; glowPasses: number } {
+    const byTier =
+      this.qualityTier === "ultra"
+        ? { contextStride: 1, maxEdges: 9000, maxCortexNodes: 260, glowPasses: 3 }
+        : this.qualityTier === "high"
+          ? { contextStride: 2, maxEdges: 6500, maxCortexNodes: 180, glowPasses: 2 }
+          : this.qualityTier === "balanced"
+            ? { contextStride: 3, maxEdges: 4200, maxCortexNodes: 120, glowPasses: 2 }
+            : { contextStride: 4, maxEdges: 2500, maxCortexNodes: 70, glowPasses: 1 };
+    if (visibleCount > 9000) return { ...byTier, contextStride: Math.max(byTier.contextStride, 3), maxEdges: Math.min(byTier.maxEdges, 4200) };
+    if (visibleCount > 5000) return { ...byTier, contextStride: Math.max(byTier.contextStride, 2), maxEdges: Math.min(byTier.maxEdges, 7000) };
+    return byTier;
+  }
+
+  private drawAmbientPulse(ctx: CanvasRenderingContext2D, atomId: string | null, atomsById: Map<string, Atom>, color: string): void {
+    if (!atomId) return;
+    const atom = atomsById.get(atomId);
+    const proj = atom ? this.projectedById.get(atom.id) : undefined;
+    if (!atom || !proj) return;
+    const t = performance.now() * 0.005;
+    const pulse = 1 + (0.5 + 0.5 * Math.sin(t + (atom.stableKey % 71) * 0.03)) * 0.95;
+    ctx.save();
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.4;
+    ctx.arc(proj.screenX, proj.screenY, Math.max(8, proj.radius * pulse), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private threadOf(atomId: string | null, atomsById: Map<string, Atom>): string | null {
+    if (!atomId) return null;
+    const atom = atomsById.get(atomId);
+    if (!atom || typeof atom.payload !== "object" || !atom.payload) return null;
+    const payload = atom.payload as Record<string, unknown>;
+    return typeof payload.threadId === "string" ? payload.threadId : null;
   }
 
   private drawConstellationConnections(ctx: CanvasRenderingContext2D, visible: Atom[]): void {
@@ -688,4 +1035,13 @@ function dot(a: { x: number; y: number; z: number }, b: { x: number; y: number; 
 function normalize(v: { x: number; y: number; z: number }) {
   const len = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z) || 1;
   return { x: v.x / len, y: v.y / len, z: v.z / len };
+}
+
+function hashFast(input: string): number {
+  let hash = 2166136261 >>> 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
