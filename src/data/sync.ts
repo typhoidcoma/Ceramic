@@ -1,8 +1,7 @@
-import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { AtomStore } from "../app/store";
-import type { AtomPatch, AtomState, AtomType } from "./types";
+import { apiUrl } from "./api";
 import { loadDictionary } from "./logogramDictionary";
-import { getSupabaseClient, hasSupabaseConfig } from "./supabase";
+import type { AtomPatch, AtomState, AtomType } from "./types";
 
 type AtomRow = {
   id: string;
@@ -18,6 +17,16 @@ type AtomRow = {
 };
 
 function rowToAtom(row: AtomRow) {
+  const payload =
+    typeof row.payload === "string"
+      ? (() => {
+          try {
+            return JSON.parse(row.payload) as unknown;
+          } catch {
+            return undefined;
+          }
+        })()
+      : row.payload;
   return {
     id: row.id,
     type: row.type,
@@ -28,11 +37,11 @@ function rowToAtom(row: AtomRow) {
     importance: row.importance ?? 0,
     title: row.title ?? undefined,
     preview: row.preview ?? undefined,
-    payload: row.payload,
+    payload,
   };
 }
 
-export type SyncState = "signed_in" | "signed_out" | "error";
+export type SyncState = "ready" | "error";
 
 export type SyncStartResult = {
   state: SyncState;
@@ -41,54 +50,36 @@ export type SyncStartResult = {
 };
 
 export async function startDataSync(store: AtomStore): Promise<SyncStartResult> {
-  if (!hasSupabaseConfig()) {
+  try {
+    await loadDictionary("heptapod_b_v1");
+  } catch {
+    // dictionary fallback handled in matcher unknown mode
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(apiUrl("/api/atoms?limit=5000"));
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Local backend is unreachable.";
     return {
       state: "error",
       cleanup: () => {},
-      error: "Missing Supabase environment values.",
+      error: message,
     };
   }
 
-  const supabase = getSupabaseClient();
-  await loadDictionary("heptapod_b_v1");
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError) {
+  if (!response.ok) {
     return {
       state: "error",
       cleanup: () => {},
-      error: userError.message,
-    };
-  }
-  if (!user) {
-    return {
-      state: "signed_out",
-      cleanup: () => {},
+      error: `Failed to load local atoms (${response.status}).`,
     };
   }
 
-  const { data, error } = await supabase
-    .from("atoms")
-    .select("id, type, state, ts, due, urgency, importance, title, preview, payload")
-    .neq("state", "archived")
-    .order("ts", { ascending: false })
-    .limit(5000);
-
-  if (error) {
-    return {
-      state: "error",
-      cleanup: () => {},
-      error: error.message,
-    };
-  }
-  if (data) {
-    const rows = data as AtomRow[];
-    store.upsertMany(rows.map(rowToAtom));
-    store.initializeActiveMessageFromData(performance.now());
-  }
+  const data = (await response.json()) as { atoms?: AtomRow[] };
+  const rows = Array.isArray(data.atoms) ? data.atoms : [];
+  store.upsertMany(rows.map(rowToAtom));
+  store.initializeActiveMessageFromData(performance.now());
 
   let scheduled = false;
   const patchQueue = new Map<string, AtomPatch>();
@@ -112,55 +103,63 @@ export async function startDataSync(store: AtomStore): Promise<SyncStartResult> 
     requestAnimationFrame(flush);
   };
 
-  const channel: RealtimeChannel = supabase
-    .channel("atoms-realtime")
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "atoms",
-        filter: `user_id=eq.${user.id}`,
-      },
-      (payload) => {
-        if (payload.eventType === "DELETE") {
-          const oldRow = payload.old as { id: string };
-          removeQueue.add(oldRow.id);
-          scheduleFlush();
-          return;
-        }
-        if (payload.eventType === "INSERT") {
-          const row = payload.new as AtomRow;
-          store.upsertMany([rowToAtom(row)]);
-          if (row.type === "message") {
-            store.activateIncomingMessage(row.id, performance.now());
-          }
-          return;
-        }
-        if (payload.eventType === "UPDATE") {
-          const row = payload.new as AtomRow;
-          patchQueue.set(row.id, {
-            id: row.id,
-            type: row.type,
-            state: row.state,
-            ts: new Date(row.ts).getTime(),
-            due: row.due ? new Date(row.due).getTime() : undefined,
-            urgency: row.urgency,
-            importance: row.importance,
-            title: row.title ?? undefined,
-            preview: row.preview ?? undefined,
-            payload: row.payload,
-          });
-          scheduleFlush();
-        }
-      },
-    )
-    .subscribe();
+  const events = new EventSource(apiUrl("/api/events"));
+  const onInsert = (event: MessageEvent<string>) => {
+    try {
+      const row = JSON.parse(event.data) as AtomRow;
+      store.upsertMany([rowToAtom(row)]);
+      if (row.type === "message") {
+        store.activateIncomingMessage(row.id, performance.now());
+      }
+    } catch {
+      // ignore malformed payloads
+    }
+  };
+
+  const onUpdate = (event: MessageEvent<string>) => {
+    try {
+      const row = JSON.parse(event.data) as AtomRow;
+      patchQueue.set(row.id, {
+        id: row.id,
+        type: row.type,
+        state: row.state,
+        ts: new Date(row.ts).getTime(),
+        due: row.due ? new Date(row.due).getTime() : undefined,
+        urgency: row.urgency,
+        importance: row.importance,
+        title: row.title ?? undefined,
+        preview: row.preview ?? undefined,
+        payload: row.payload,
+      });
+      scheduleFlush();
+    } catch {
+      // ignore malformed payloads
+    }
+  };
+
+  const onDelete = (event: MessageEvent<string>) => {
+    try {
+      const payload = JSON.parse(event.data) as { id: string };
+      if (payload.id) {
+        removeQueue.add(payload.id);
+        scheduleFlush();
+      }
+    } catch {
+      // ignore malformed payloads
+    }
+  };
+
+  events.addEventListener("atom_insert", onInsert as EventListener);
+  events.addEventListener("atom_update", onUpdate as EventListener);
+  events.addEventListener("atom_delete", onDelete as EventListener);
 
   return {
-    state: "signed_in",
+    state: "ready",
     cleanup: () => {
-      void supabase.removeChannel(channel);
+      events.removeEventListener("atom_insert", onInsert as EventListener);
+      events.removeEventListener("atom_update", onUpdate as EventListener);
+      events.removeEventListener("atom_delete", onDelete as EventListener);
+      events.close();
     },
   };
 }

@@ -1,4 +1,4 @@
-import { getSupabaseClient, hasSupabaseConfig } from "./supabase";
+import { apiUrl } from "./api";
 import type { DictionaryEntry } from "./types";
 
 type DictionaryRow = {
@@ -8,7 +8,6 @@ type DictionaryRow = {
   segment_mask: number;
   style: Record<string, unknown> | null;
   language: string;
-  is_active: boolean;
 };
 
 let loadedLanguage = "";
@@ -26,21 +25,15 @@ function normalizePhrase(input: string): string {
 
 export async function loadDictionary(language = "heptapod_b_v1"): Promise<void> {
   if (loadedLanguage === language && phraseMap.size > 0) return;
+  loadedLanguage = language;
   phraseMap = new Map();
   canonicalMap = new Map();
-  loadedLanguage = language;
-  if (!hasSupabaseConfig()) return;
 
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from("logogram_dictionary")
-    .select("id, phrase, canonical_key, segment_mask, style, language, is_active")
-    .eq("language", language)
-    .eq("is_active", true)
-    .limit(200);
+  const response = await fetch(apiUrl(`/api/dictionary?language=${encodeURIComponent(language)}&limit=200`));
+  if (!response.ok) return;
+  const data = (await response.json()) as { entries?: DictionaryRow[] };
+  const rows = Array.isArray(data.entries) ? data.entries : [];
 
-  if (error || !data) return;
-  const rows = data as DictionaryRow[];
   for (const row of rows) {
     const entry: DictionaryEntry = {
       id: row.id,

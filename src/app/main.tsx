@@ -3,12 +3,10 @@ import { ATOM_STATES, ATOM_TYPES, type TimelineSortMode } from "../data/types";
 import { startDataSync } from "../data/sync";
 import { generateAndInsertIncomingMessage } from "../data/llm";
 import { Renderer } from "../gpu/renderer";
-import { AuthGate } from "./auth/AuthGate";
-import { useAuth } from "./auth/useAuth";
 import { AtomStore, buildSeededDemoAtoms, type QualityTierOverride } from "./store";
 
 const store = new AtomStore();
-type AppPhase = "loading_session" | "signed_out" | "signed_in_syncing" | "signed_in_ready";
+type AppPhase = "syncing" | "ready";
 
 function useStoreSnapshot() {
   const version = useSyncExternalStore(
@@ -31,8 +29,7 @@ export function App() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const snapshot = useStoreSnapshot();
-  const auth = useAuth();
-  const [phase, setPhase] = useState<AppPhase>("loading_session");
+  const [phase, setPhase] = useState<AppPhase>("syncing");
   const [syncError, setSyncError] = useState<string | null>(null);
   const [rendererError, setRendererError] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<TimelineSortMode>("recent");
@@ -41,7 +38,6 @@ export function App() {
   const [incomingPrompt, setIncomingPrompt] = useState("Summarize intent: we arrive with open hands.");
 
   useEffect(() => {
-    if (phase !== "signed_in_ready" && phase !== "signed_in_syncing") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const renderer = new Renderer(canvas, store);
@@ -57,24 +53,14 @@ export function App() {
       renderer.stop();
       rendererRef.current = null;
     };
-  }, [phase]);
+  }, []);
 
   useEffect(() => {
-    if (auth.loading) {
-      setPhase("loading_session");
-      return;
-    }
-    if (!auth.user) {
-      setPhase("signed_out");
-      setSyncError(null);
-      store.clear();
-      return;
-    }
-
-    setPhase("signed_in_syncing");
-    setSyncError(null);
     let active = true;
     let cleanup: (() => void) | null = null;
+
+    setPhase("syncing");
+    setSyncError(null);
 
     void (async () => {
       const result = await startDataSync(store);
@@ -83,24 +69,15 @@ export function App() {
         return;
       }
       cleanup = result.cleanup;
-      if (result.state === "signed_in") {
-        setPhase("signed_in_ready");
-        return;
-      }
-      if (result.state === "signed_out") {
-        setPhase("signed_out");
-        store.clear();
-        return;
-      }
-      setPhase("signed_in_ready");
-      setSyncError(result.error ?? "Sync failed.");
+      setPhase("ready");
+      if (result.state === "error") setSyncError(result.error ?? "Local sync failed.");
     })();
 
     return () => {
       active = false;
       cleanup?.();
     };
-  }, [auth.loading, auth.user?.id]);
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -139,12 +116,8 @@ export function App() {
     rendererRef.current?.resetView();
   };
 
-  const onSignOut = async () => {
-    await auth.signOut();
-  };
-
   const onGenerateLlmMessage = async () => {
-    if (!auth.user?.id || llmBusy) return;
+    if (llmBusy) return;
     const prompt = incomingPrompt.trim();
     if (!prompt) {
       setLlmStatus("Enter a prompt first.");
@@ -153,12 +126,11 @@ export function App() {
     setLlmBusy(true);
     setLlmStatus(null);
     try {
-      const result = await generateAndInsertIncomingMessage(auth.user.id, prompt);
+      const result = await generateAndInsertIncomingMessage(prompt);
+      store.setPromptLatencyMs(result.latencyMs);
       if (result.ok) {
-        store.setPromptLatencyMs(result.latencyMs);
         setLlmStatus(`Inserted ${result.canonicalKey}: ${result.text}`);
       } else {
-        store.setPromptLatencyMs(result.latencyMs);
         setLlmStatus(result.error);
       }
     } catch (error: unknown) {
@@ -169,21 +141,6 @@ export function App() {
     }
   };
 
-  if (phase === "loading_session") {
-    return (
-      <div className="auth-gate">
-        <div className="auth-card">
-          <h1>Ceramic</h1>
-          <p className="muted">Loading session...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (phase === "signed_out") {
-    return <AuthGate auth={auth} />;
-  }
-
   if (rendererError) {
     return (
       <div className="auth-gate">
@@ -191,7 +148,6 @@ export function App() {
           <h1>Renderer Error</h1>
           <p className="error">{rendererError}</p>
           <p className="muted">Try Chrome or Edge with WebGPU enabled, then reload.</p>
-          <button onClick={onSignOut}>Sign out</button>
         </div>
       </div>
     );
@@ -245,7 +201,6 @@ export function App() {
             <button className="chip" disabled={llmBusy} onClick={onGenerateLlmMessage}>
               {llmBusy ? "Generating..." : "LLM message"}
             </button>
-            <button className="chip" onClick={onSignOut}>Sign out</button>
           </>
         )}
         <button className="chip" onClick={() => store.setOverlayMinimized(!snapshot.overlayMinimized)}>{snapshot.overlayMinimized ? "Expand" : "Minimize"}</button>
@@ -326,8 +281,8 @@ export function App() {
           <span>phrase {snapshot.activeMessageMatchedPhrase ?? "-"}</span>
           <span>latency {snapshot.promptLatencyMs ?? "-"}ms</span>
           <span>quality {snapshot.qualityTierOverride}</span>
-          {phase === "signed_in_syncing" && <span>syncing</span>}
-          {syncError && <span className="error">sync error</span>}
+          {phase === "syncing" && <span>syncing</span>}
+          {syncError && <span className="error">sync error: {syncError}</span>}
           {llmStatus && <span>{llmStatus}</span>}
         </div>
       )}
