@@ -1,6 +1,7 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { AtomStore } from "../app/store";
 import type { AtomPatch, AtomState, AtomType } from "./types";
+import { loadDictionary } from "./logogramDictionary";
 import { getSupabaseClient, hasSupabaseConfig } from "./supabase";
 
 type AtomRow = {
@@ -49,6 +50,7 @@ export async function startDataSync(store: AtomStore): Promise<SyncStartResult> 
   }
 
   const supabase = getSupabaseClient();
+  await loadDictionary("heptapod_b_v1");
   const {
     data: { user },
     error: userError,
@@ -85,6 +87,7 @@ export async function startDataSync(store: AtomStore): Promise<SyncStartResult> 
   if (data) {
     const rows = data as AtomRow[];
     store.upsertMany(rows.map(rowToAtom));
+    store.initializeActiveMessageFromData(performance.now());
   }
 
   let scheduled = false;
@@ -129,6 +132,9 @@ export async function startDataSync(store: AtomStore): Promise<SyncStartResult> 
         if (payload.eventType === "INSERT") {
           const row = payload.new as AtomRow;
           store.upsertMany([rowToAtom(row)]);
+          if (row.type === "message") {
+            store.activateIncomingMessage(row.id, performance.now());
+          }
           return;
         }
         if (payload.eventType === "UPDATE") {

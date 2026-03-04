@@ -45,6 +45,25 @@ export type AtomPatch = Partial<Omit<Atom, "id" | "stableKey" | "score" | "sizeT
   id: string;
 };
 
+export type DictionaryEntry = {
+  id: string;
+  phrase: string;
+  canonicalKey: string;
+  segmentMask: number;
+  style: Record<string, unknown>;
+  language: string;
+};
+
+export type MatchedLogogram = {
+  source: "dictionary" | "unknown";
+  canonicalKey: string;
+  entryId?: string;
+  matchedPhrase?: string;
+  messageHash: string;
+  segmentMask: number;
+  style: Record<string, unknown>;
+};
+
 export type TimelineBucket = {
   key: string;
   label: string;

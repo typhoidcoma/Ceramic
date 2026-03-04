@@ -1,70 +1,81 @@
-import shaderCode from "./shaders.wgsl?raw";
+import shaderCode from "./sim/shaders.wgsl?raw";
 
 export type PipelineBundle = {
-  pipeline: GPURenderPipeline;
-  globalsBindGroupLayout: GPUBindGroupLayout;
-  instancesBindGroupLayout: GPUBindGroupLayout;
+  computeBindGroupLayout: GPUBindGroupLayout;
+  renderBindGroupLayout: GPUBindGroupLayout;
+  injection: GPUComputePipeline;
+  velocity: GPUComputePipeline;
+  advection: GPUComputePipeline;
+  divergence: GPUComputePipeline;
+  pressure: GPUComputePipeline;
+  projection: GPUComputePipeline;
+  damp: GPUComputePipeline;
+  render: GPURenderPipeline;
 };
 
-export function createPipeline(device: GPUDevice, format: GPUTextureFormat): PipelineBundle {
+export function createPipelineBundle(device: GPUDevice, format: GPUTextureFormat): PipelineBundle {
   const module = device.createShaderModule({ code: shaderCode });
 
-  const globalsBindGroupLayout = device.createBindGroupLayout({
+  const computeBindGroupLayout = device.createBindGroupLayout({
     entries: [
-      {
-        binding: 0,
-        visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-        buffer: { type: "uniform" },
-      },
+      { binding: 0, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 3, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+      { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
     ],
   });
 
-  const instancesBindGroupLayout = device.createBindGroupLayout({
+  const renderBindGroupLayout = device.createBindGroupLayout({
     entries: [
-      {
-        binding: 0,
-        visibility: GPUShaderStage.VERTEX,
-        buffer: { type: "read-only-storage" },
-      },
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+      { binding: 8, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
     ],
   });
 
-  const layout = device.createPipelineLayout({
-    bindGroupLayouts: [globalsBindGroupLayout, instancesBindGroupLayout],
-  });
+  const computeLayout = device.createPipelineLayout({ bindGroupLayouts: [computeBindGroupLayout] });
+  const renderLayout = device.createPipelineLayout({ bindGroupLayouts: [renderBindGroupLayout] });
 
-  const pipeline = device.createRenderPipeline({
-    layout,
-    vertex: {
-      module,
-      entryPoint: "vs_main",
-    },
+  const makeCompute = (entryPoint: string) =>
+    device.createComputePipeline({
+      layout: computeLayout,
+      compute: { module, entryPoint },
+    });
+
+  const render = device.createRenderPipeline({
+    layout: renderLayout,
+    vertex: { module, entryPoint: "vs_fullscreen" },
     fragment: {
       module,
-      entryPoint: "fs_main",
+      entryPoint: "fs_volume",
       targets: [
         {
           format,
           blend: {
-            color: {
-              srcFactor: "src-alpha",
-              dstFactor: "one-minus-src-alpha",
-              operation: "add",
-            },
-            alpha: {
-              srcFactor: "one",
-              dstFactor: "one-minus-src-alpha",
-              operation: "add",
-            },
+            color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+            alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
           },
         },
       ],
     },
-    primitive: {
-      topology: "triangle-list",
-      cullMode: "none",
-    },
+    primitive: { topology: "triangle-list", cullMode: "none" },
   });
 
-  return { pipeline, globalsBindGroupLayout, instancesBindGroupLayout };
+  return {
+    computeBindGroupLayout,
+    renderBindGroupLayout,
+    injection: makeCompute("inject_main"),
+    velocity: makeCompute("velocity_main"),
+    advection: makeCompute("advect_main"),
+    divergence: makeCompute("divergence_main"),
+    pressure: makeCompute("pressure_main"),
+    projection: makeCompute("projection_main"),
+    damp: makeCompute("damp_main"),
+    render,
+  };
 }
