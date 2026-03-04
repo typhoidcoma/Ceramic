@@ -1,4 +1,4 @@
-import { ATOM_TYPES, type Atom, type AtomPatch, type AtomState, type AtomType, type TimelineBucket, type TimelineSortMode, enrichAtom } from "../data/types";
+import { ATOM_TYPES, type Atom, type AtomPatch, type AtomState, type AtomType, type BenchmarkMode, type LogogramSolveBreakdown, type TimelineBucket, type TimelineSortMode, enrichAtom } from "../data/types";
 import { assignSmokeTargets, easePosition, type LayoutMode } from "../layout/layout";
 
 export type Filters = {
@@ -40,6 +40,59 @@ type Snapshot = {
   activeMessageCanonicalKey: string | null;
   taskPointCount: number;
   promptLatencyMs: number | null;
+  showLumaHistogram: boolean;
+  inkFieldMean: number;
+  inkFieldMax: number;
+  brightPixelRatio: number;
+  lumaHistogram: number[];
+  frameLumaMeanActual: number;
+  frameLumaMaxActual: number;
+  brightPixelRatioActual: number;
+  frameLumaHistogramActual: number[];
+  sseStatus: "connecting" | "open" | "stale" | "closed";
+  lastEventAtMs: number;
+  activeMessagePresent: boolean;
+  hasTaskPoints: boolean;
+  zeroPointFrames: number;
+  logogramChannelCounts: { ring: number; tendril: number; hook: number };
+  ringContinuityScore: number;
+  sweepProgress: number;
+  injectorBBoxArea: number;
+  ringCoverageRatio: number;
+  ringBandOccupancyRatio: number;
+  innerVoidRatio: number;
+  innerVoidPenalty: number;
+  centerMassRatio: number;
+  sectorOccupancy: number[];
+  ringSectorOccupancy: number[];
+  solveEnergy: number;
+  solveBreakdown: LogogramSolveBreakdown;
+  unwrapProfiles: { activationTheta: number[]; thicknessTheta: number[]; spurTheta: number[] };
+  gapCountSolved: number;
+  constraintViolationCount: number;
+  shapeSignature: number[];
+  signatureDistanceToCanonical: number;
+  textureEntropy: number;
+  radialVariance: number;
+  arcSpacingVariance: number;
+  repeatScore: number;
+  generatedRadialProfile: number[];
+  generatedAngularHistogram12: number[];
+  generatedGapCount: number;
+  generatedFrayDensity: number;
+  generatedStrokeWidthMean: number;
+  generatedStrokeWidthVar: number;
+  benchmarkEnabled: boolean;
+  benchmarkMode: BenchmarkMode;
+  benchmarkSampleId: string | null;
+  benchmarkCandidateSetId: string | null;
+  benchmarkScoreTotal: number;
+  benchmarkScoreStdDev: number;
+  benchmarkPass: boolean;
+  benchmarkOverallPass: boolean;
+  benchmarkFpsWindowMin: number;
+  benchmarkDistanceBreakdown: { radial: number; angular: number; gaps: number; fray: number; width: number };
+  fpsGuardrailPass: boolean;
 };
 
 type Listener = () => void;
@@ -71,6 +124,57 @@ export class AtomStore {
   private activeMessageCanonicalKey: string | null = null;
   private taskPointCount = 0;
   private promptLatencyMs: number | null = null;
+  private showLumaHistogram = false;
+  private inkFieldMean = 0;
+  private inkFieldMax = 0;
+  private brightPixelRatio = 0;
+  private lumaHistogram = [0, 0, 0, 0, 0, 0, 0, 0];
+  private frameLumaMeanActual = 0;
+  private frameLumaMaxActual = 0;
+  private brightPixelRatioActual = 0;
+  private frameLumaHistogramActual = [0, 0, 0, 0, 0, 0, 0, 0];
+  private sseStatus: "connecting" | "open" | "stale" | "closed" = "connecting";
+  private lastEventAtMs = 0;
+  private zeroPointFrames = 0;
+  private logogramChannelCounts = { ring: 0, tendril: 0, hook: 0 };
+  private ringContinuityScore = 0;
+  private sweepProgress = 0;
+  private injectorBBoxArea = 0;
+  private ringCoverageRatio = 0;
+  private ringBandOccupancyRatio = 0;
+  private innerVoidRatio = 1;
+  private innerVoidPenalty = 0;
+  private centerMassRatio = 0;
+  private sectorOccupancy = Array.from({ length: 12 }, () => 0);
+  private ringSectorOccupancy = Array.from({ length: 12 }, () => 0);
+  private solveEnergy = 0;
+  private solveBreakdown: LogogramSolveBreakdown = { eMask: 0, eContinuity: 0, eGap: 0, eThickness: 0, eVoid: 0, eRadius: 0, eSparsity: 0, total: 0 };
+  private unwrapProfiles = { activationTheta: Array.from({ length: 192 }, () => 0), thicknessTheta: Array.from({ length: 192 }, () => 0), spurTheta: Array.from({ length: 192 }, () => 0) };
+  private gapCountSolved = 0;
+  private constraintViolationCount = 0;
+  private shapeSignature = Array.from({ length: 24 }, () => 0);
+  private signatureDistanceToCanonical = 0;
+  private textureEntropy = 0;
+  private radialVariance = 0;
+  private arcSpacingVariance = 0;
+  private repeatScore = 0;
+  private generatedRadialProfile = Array.from({ length: 24 }, () => 0);
+  private generatedAngularHistogram12 = Array.from({ length: 12 }, () => 0);
+  private generatedGapCount = 0;
+  private generatedFrayDensity = 0;
+  private generatedStrokeWidthMean = 0;
+  private generatedStrokeWidthVar = 0;
+  private benchmarkEnabled = false;
+  private benchmarkMode: BenchmarkMode = "frozen_eval";
+  private benchmarkSampleId: string | null = null;
+  private benchmarkCandidateSetId: string | null = null;
+  private benchmarkScoreTotal = 0;
+  private benchmarkScoreStdDev = 0;
+  private benchmarkPass = false;
+  private benchmarkOverallPass = false;
+  private benchmarkFpsWindowMin = 0;
+  private benchmarkDistanceBreakdown = { radial: 0, angular: 0, gaps: 0, fray: 0, width: 0 };
+  private fpsGuardrailPass = true;
   private filters: Filters = {
     types: new Set(ATOM_TYPES),
     states: new Set(["new", "active", "snoozed", "done"]),
@@ -109,6 +213,63 @@ export class AtomStore {
       activeMessageCanonicalKey: this.activeMessageCanonicalKey,
       taskPointCount: this.taskPointCount,
       promptLatencyMs: this.promptLatencyMs,
+      showLumaHistogram: this.showLumaHistogram,
+      inkFieldMean: this.inkFieldMean,
+      inkFieldMax: this.inkFieldMax,
+      brightPixelRatio: this.brightPixelRatio,
+      lumaHistogram: [...this.lumaHistogram],
+      frameLumaMeanActual: this.frameLumaMeanActual,
+      frameLumaMaxActual: this.frameLumaMaxActual,
+      brightPixelRatioActual: this.brightPixelRatioActual,
+      frameLumaHistogramActual: [...this.frameLumaHistogramActual],
+      sseStatus: this.sseStatus,
+      lastEventAtMs: this.lastEventAtMs,
+      activeMessagePresent: this.activeMessageAtomId !== null,
+      hasTaskPoints: this.taskPointCount > 0,
+      zeroPointFrames: this.zeroPointFrames,
+      logogramChannelCounts: { ...this.logogramChannelCounts },
+      ringContinuityScore: this.ringContinuityScore,
+      sweepProgress: this.sweepProgress,
+      injectorBBoxArea: this.injectorBBoxArea,
+      ringCoverageRatio: this.ringCoverageRatio,
+      ringBandOccupancyRatio: this.ringBandOccupancyRatio,
+      innerVoidRatio: this.innerVoidRatio,
+      innerVoidPenalty: this.innerVoidPenalty,
+      centerMassRatio: this.centerMassRatio,
+      sectorOccupancy: [...this.sectorOccupancy],
+      ringSectorOccupancy: [...this.ringSectorOccupancy],
+      solveEnergy: this.solveEnergy,
+      solveBreakdown: { ...this.solveBreakdown },
+      unwrapProfiles: {
+        activationTheta: [...this.unwrapProfiles.activationTheta],
+        thicknessTheta: [...this.unwrapProfiles.thicknessTheta],
+        spurTheta: [...this.unwrapProfiles.spurTheta],
+      },
+      gapCountSolved: this.gapCountSolved,
+      constraintViolationCount: this.constraintViolationCount,
+      shapeSignature: [...this.shapeSignature],
+      signatureDistanceToCanonical: this.signatureDistanceToCanonical,
+      textureEntropy: this.textureEntropy,
+      radialVariance: this.radialVariance,
+      arcSpacingVariance: this.arcSpacingVariance,
+      repeatScore: this.repeatScore,
+      generatedRadialProfile: [...this.generatedRadialProfile],
+      generatedAngularHistogram12: [...this.generatedAngularHistogram12],
+      generatedGapCount: this.generatedGapCount,
+      generatedFrayDensity: this.generatedFrayDensity,
+      generatedStrokeWidthMean: this.generatedStrokeWidthMean,
+      generatedStrokeWidthVar: this.generatedStrokeWidthVar,
+      benchmarkEnabled: this.benchmarkEnabled,
+      benchmarkMode: this.benchmarkMode,
+      benchmarkSampleId: this.benchmarkSampleId,
+      benchmarkCandidateSetId: this.benchmarkCandidateSetId,
+      benchmarkScoreTotal: this.benchmarkScoreTotal,
+      benchmarkScoreStdDev: this.benchmarkScoreStdDev,
+      benchmarkPass: this.benchmarkPass,
+      benchmarkOverallPass: this.benchmarkOverallPass,
+      benchmarkFpsWindowMin: this.benchmarkFpsWindowMin,
+      benchmarkDistanceBreakdown: { ...this.benchmarkDistanceBreakdown },
+      fpsGuardrailPass: this.fpsGuardrailPass,
     };
   }
 
@@ -123,8 +284,234 @@ export class AtomStore {
 
   setTaskPointCount(count: number): void {
     const next = Math.max(0, Math.floor(count));
-    if (this.taskPointCount === next) return;
+    if (next > 0) this.zeroPointFrames = 0;
+    else this.zeroPointFrames += 1;
+    if (this.taskPointCount === next) {
+      this.emitView();
+      return;
+    }
     this.taskPointCount = next;
+    this.emitView();
+  }
+
+  setSseStatus(status: "connecting" | "open" | "stale" | "closed"): void {
+    if (this.sseStatus === status) return;
+    this.sseStatus = status;
+    this.emitView();
+  }
+
+  setLastEventAtMs(ms: number): void {
+    const next = Math.max(0, Math.floor(ms));
+    if (this.lastEventAtMs === next) return;
+    this.lastEventAtMs = next;
+    this.emitView();
+  }
+
+  setLogogramDiagnostics(input: {
+    channelCounts: { ring: number; tendril: number; hook: number };
+    ringContinuityScore: number;
+    sweepProgress: number;
+    injectorBBoxArea: number;
+    ringCoverageRatio: number;
+    ringBandOccupancyRatio: number;
+    innerVoidRatio: number;
+    innerVoidPenalty: number;
+    centerMassRatio: number;
+    sectorOccupancy: number[];
+    ringSectorOccupancy: number[];
+    solveEnergy: number;
+    solveBreakdown: LogogramSolveBreakdown;
+    unwrapProfiles: { activationTheta: number[]; thicknessTheta: number[]; spurTheta: number[] };
+    gapCountSolved: number;
+    constraintViolationCount: number;
+    shapeSignature: number[];
+    signatureDistanceToCanonical: number;
+    textureEntropy: number;
+    radialVariance: number;
+    arcSpacingVariance: number;
+    repeatScore: number;
+    generatedRadialProfile: number[];
+    generatedAngularHistogram12: number[];
+    generatedGapCount: number;
+    generatedFrayDensity: number;
+    generatedStrokeWidthMean: number;
+    generatedStrokeWidthVar: number;
+  }): void {
+    const next = {
+      ring: Math.max(0, Math.floor(input.channelCounts.ring)),
+      tendril: Math.max(0, Math.floor(input.channelCounts.tendril)),
+      hook: Math.max(0, Math.floor(input.channelCounts.hook)),
+    };
+    const continuity = Math.max(0, Math.min(1, input.ringContinuityScore));
+    const sweep = Math.max(0, Math.min(1, input.sweepProgress));
+    const area = Math.max(0, Math.min(1, input.injectorBBoxArea));
+    const coverage = Math.max(0, Math.min(1, input.ringCoverageRatio));
+    const bandOccupancy = Math.max(0, Math.min(1, input.ringBandOccupancyRatio));
+    const voidRatio = Math.max(0, Math.min(1, input.innerVoidRatio));
+    const voidPenalty = Math.max(0, Math.min(1, input.innerVoidPenalty));
+    const centerRatio = Math.max(0, Math.min(1, input.centerMassRatio));
+    const sectors = Array.from({ length: 12 }, (_, i) => Math.max(0, Math.floor(input.sectorOccupancy[i] ?? 0)));
+    const ringSectors = Array.from({ length: 12 }, (_, i) => Math.max(0, Math.floor(input.ringSectorOccupancy[i] ?? 0)));
+    const solveEnergy = Number.isFinite(input.solveEnergy) ? Math.max(0, input.solveEnergy) : 0;
+    const solveBreakdown: LogogramSolveBreakdown = {
+      eMask: Number.isFinite(input.solveBreakdown.eMask) ? Math.max(0, input.solveBreakdown.eMask) : 0,
+      eContinuity: Number.isFinite(input.solveBreakdown.eContinuity) ? Math.max(0, input.solveBreakdown.eContinuity) : 0,
+      eGap: Number.isFinite(input.solveBreakdown.eGap) ? Math.max(0, input.solveBreakdown.eGap) : 0,
+      eThickness: Number.isFinite(input.solveBreakdown.eThickness) ? Math.max(0, input.solveBreakdown.eThickness) : 0,
+      eVoid: Number.isFinite(input.solveBreakdown.eVoid) ? Math.max(0, input.solveBreakdown.eVoid) : 0,
+      eRadius: Number.isFinite(input.solveBreakdown.eRadius) ? Math.max(0, input.solveBreakdown.eRadius) : 0,
+      eSparsity: Number.isFinite(input.solveBreakdown.eSparsity) ? Math.max(0, input.solveBreakdown.eSparsity) : 0,
+      total: Number.isFinite(input.solveBreakdown.total) ? Math.max(0, input.solveBreakdown.total) : 0,
+    };
+    const unwrapProfiles = {
+      activationTheta: Array.from({ length: 192 }, (_, i) => Math.max(0, Math.min(1, input.unwrapProfiles.activationTheta[i] ?? 0))),
+      thicknessTheta: Array.from({ length: 192 }, (_, i) => Math.max(0, Math.min(1, input.unwrapProfiles.thicknessTheta[i] ?? 0))),
+      spurTheta: Array.from({ length: 192 }, (_, i) => Math.max(0, Math.min(1, input.unwrapProfiles.spurTheta[i] ?? 0))),
+    };
+    const gapCountSolved = Math.max(0, Math.floor(input.gapCountSolved));
+    const violationCount = Math.max(0, Math.floor(input.constraintViolationCount));
+    const shapeSignature = Array.from({ length: 24 }, (_, i) => Math.max(0, Math.min(1, input.shapeSignature[i] ?? 0)));
+    const signatureDistance = Number.isFinite(input.signatureDistanceToCanonical) ? Math.max(0, input.signatureDistanceToCanonical) : 0;
+    const textureEntropy = Number.isFinite(input.textureEntropy) ? Math.max(0, input.textureEntropy) : 0;
+    const radialVariance = Number.isFinite(input.radialVariance) ? Math.max(0, input.radialVariance) : 0;
+    const arcSpacingVariance = Number.isFinite(input.arcSpacingVariance) ? Math.max(0, input.arcSpacingVariance) : 0;
+    const repeatScore = Number.isFinite(input.repeatScore) ? Math.max(0, Math.min(1, input.repeatScore)) : 0;
+    const generatedRadialProfile = Array.from({ length: 24 }, (_, i) => Math.max(0, input.generatedRadialProfile[i] ?? 0));
+    const generatedAngularHistogram12 = Array.from({ length: 12 }, (_, i) => Math.max(0, input.generatedAngularHistogram12[i] ?? 0));
+    const generatedGapCount = Math.max(0, Math.floor(input.generatedGapCount));
+    const generatedFrayDensity = Number.isFinite(input.generatedFrayDensity) ? Math.max(0, Math.min(1, input.generatedFrayDensity)) : 0;
+    const generatedStrokeWidthMean = Number.isFinite(input.generatedStrokeWidthMean) ? Math.max(0, input.generatedStrokeWidthMean) : 0;
+    const generatedStrokeWidthVar = Number.isFinite(input.generatedStrokeWidthVar) ? Math.max(0, input.generatedStrokeWidthVar) : 0;
+    const changed =
+      this.logogramChannelCounts.ring !== next.ring ||
+      this.logogramChannelCounts.tendril !== next.tendril ||
+      this.logogramChannelCounts.hook !== next.hook ||
+      this.ringContinuityScore !== continuity ||
+      this.sweepProgress !== sweep ||
+      this.injectorBBoxArea !== area ||
+      this.ringCoverageRatio !== coverage ||
+      this.ringBandOccupancyRatio !== bandOccupancy ||
+      this.innerVoidRatio !== voidRatio ||
+      this.innerVoidPenalty !== voidPenalty ||
+      this.centerMassRatio !== centerRatio ||
+      this.sectorOccupancy.some((value, i) => value !== sectors[i]) ||
+      this.ringSectorOccupancy.some((value, i) => value !== ringSectors[i]) ||
+      this.solveEnergy !== solveEnergy ||
+      this.solveBreakdown.eMask !== solveBreakdown.eMask ||
+      this.solveBreakdown.eContinuity !== solveBreakdown.eContinuity ||
+      this.solveBreakdown.eGap !== solveBreakdown.eGap ||
+      this.solveBreakdown.eThickness !== solveBreakdown.eThickness ||
+      this.solveBreakdown.eVoid !== solveBreakdown.eVoid ||
+      this.solveBreakdown.eRadius !== solveBreakdown.eRadius ||
+      this.solveBreakdown.eSparsity !== solveBreakdown.eSparsity ||
+      this.solveBreakdown.total !== solveBreakdown.total ||
+      this.unwrapProfiles.activationTheta.some((v, i) => v !== unwrapProfiles.activationTheta[i]) ||
+      this.unwrapProfiles.thicknessTheta.some((v, i) => v !== unwrapProfiles.thicknessTheta[i]) ||
+      this.unwrapProfiles.spurTheta.some((v, i) => v !== unwrapProfiles.spurTheta[i]) ||
+      this.gapCountSolved !== gapCountSolved ||
+      this.constraintViolationCount !== violationCount ||
+      this.shapeSignature.some((value, i) => value !== shapeSignature[i]) ||
+      this.signatureDistanceToCanonical !== signatureDistance ||
+      this.textureEntropy !== textureEntropy ||
+      this.radialVariance !== radialVariance ||
+      this.arcSpacingVariance !== arcSpacingVariance ||
+      this.repeatScore !== repeatScore ||
+      this.generatedRadialProfile.some((v, i) => v !== generatedRadialProfile[i]) ||
+      this.generatedAngularHistogram12.some((v, i) => v !== generatedAngularHistogram12[i]) ||
+      this.generatedGapCount !== generatedGapCount ||
+      this.generatedFrayDensity !== generatedFrayDensity ||
+      this.generatedStrokeWidthMean !== generatedStrokeWidthMean ||
+      this.generatedStrokeWidthVar !== generatedStrokeWidthVar;
+    if (!changed) return;
+    this.logogramChannelCounts = next;
+    this.ringContinuityScore = continuity;
+    this.sweepProgress = sweep;
+    this.injectorBBoxArea = area;
+    this.ringCoverageRatio = coverage;
+    this.ringBandOccupancyRatio = bandOccupancy;
+    this.innerVoidRatio = voidRatio;
+    this.innerVoidPenalty = voidPenalty;
+    this.centerMassRatio = centerRatio;
+    this.sectorOccupancy = sectors;
+    this.ringSectorOccupancy = ringSectors;
+    this.solveEnergy = solveEnergy;
+    this.solveBreakdown = solveBreakdown;
+    this.unwrapProfiles = unwrapProfiles;
+    this.gapCountSolved = gapCountSolved;
+    this.constraintViolationCount = violationCount;
+    this.shapeSignature = shapeSignature;
+    this.signatureDistanceToCanonical = signatureDistance;
+    this.textureEntropy = textureEntropy;
+    this.radialVariance = radialVariance;
+    this.arcSpacingVariance = arcSpacingVariance;
+    this.repeatScore = repeatScore;
+    this.generatedRadialProfile = generatedRadialProfile;
+    this.generatedAngularHistogram12 = generatedAngularHistogram12;
+    this.generatedGapCount = generatedGapCount;
+    this.generatedFrayDensity = generatedFrayDensity;
+    this.generatedStrokeWidthMean = generatedStrokeWidthMean;
+    this.generatedStrokeWidthVar = generatedStrokeWidthVar;
+    this.emitView();
+  }
+
+  setBenchmarkDiagnostics(input: {
+    enabled: boolean;
+    mode: BenchmarkMode;
+    sampleId: string | null;
+    candidateSetId: string | null;
+    scoreTotal: number;
+    scoreStdDev: number;
+    pass: boolean;
+    overallPass: boolean;
+    fpsWindowMin: number;
+    distance: { radial: number; angular: number; gaps: number; fray: number; width: number };
+    fpsGuardrailPass: boolean;
+  }): void {
+    const nextEnabled = !!input.enabled;
+    const nextMode = input.mode;
+    const nextSampleId = input.sampleId;
+    const nextCandidateSetId = input.candidateSetId;
+    const nextScore = Number.isFinite(input.scoreTotal) ? Math.max(0, input.scoreTotal) : 0;
+    const nextScoreStdDev = Number.isFinite(input.scoreStdDev) ? Math.max(0, input.scoreStdDev) : 0;
+    const nextPass = !!input.pass;
+    const nextOverallPass = !!input.overallPass;
+    const nextFpsWindowMin = Number.isFinite(input.fpsWindowMin) ? Math.max(0, input.fpsWindowMin) : 0;
+    const nextDistance = {
+      radial: Number.isFinite(input.distance.radial) ? Math.max(0, input.distance.radial) : 0,
+      angular: Number.isFinite(input.distance.angular) ? Math.max(0, input.distance.angular) : 0,
+      gaps: Number.isFinite(input.distance.gaps) ? Math.max(0, input.distance.gaps) : 0,
+      fray: Number.isFinite(input.distance.fray) ? Math.max(0, input.distance.fray) : 0,
+      width: Number.isFinite(input.distance.width) ? Math.max(0, input.distance.width) : 0,
+    };
+    const nextGuard = !!input.fpsGuardrailPass;
+    const changed =
+      this.benchmarkEnabled !== nextEnabled ||
+      this.benchmarkMode !== nextMode ||
+      this.benchmarkSampleId !== nextSampleId ||
+      this.benchmarkCandidateSetId !== nextCandidateSetId ||
+      this.benchmarkScoreTotal !== nextScore ||
+      this.benchmarkScoreStdDev !== nextScoreStdDev ||
+      this.benchmarkPass !== nextPass ||
+      this.benchmarkOverallPass !== nextOverallPass ||
+      this.benchmarkFpsWindowMin !== nextFpsWindowMin ||
+      this.fpsGuardrailPass !== nextGuard ||
+      this.benchmarkDistanceBreakdown.radial !== nextDistance.radial ||
+      this.benchmarkDistanceBreakdown.angular !== nextDistance.angular ||
+      this.benchmarkDistanceBreakdown.gaps !== nextDistance.gaps ||
+      this.benchmarkDistanceBreakdown.fray !== nextDistance.fray ||
+      this.benchmarkDistanceBreakdown.width !== nextDistance.width;
+    if (!changed) return;
+    this.benchmarkEnabled = nextEnabled;
+    this.benchmarkMode = nextMode;
+    this.benchmarkSampleId = nextSampleId;
+    this.benchmarkCandidateSetId = nextCandidateSetId;
+    this.benchmarkScoreTotal = nextScore;
+    this.benchmarkScoreStdDev = nextScoreStdDev;
+    this.benchmarkPass = nextPass;
+    this.benchmarkOverallPass = nextOverallPass;
+    this.benchmarkFpsWindowMin = nextFpsWindowMin;
+    this.benchmarkDistanceBreakdown = nextDistance;
+    this.fpsGuardrailPass = nextGuard;
     this.emitView();
   }
 
@@ -169,6 +556,48 @@ export class AtomStore {
     const next = value === null ? null : Math.max(0, Math.floor(value));
     if (this.promptLatencyMs === next) return;
     this.promptLatencyMs = next;
+    this.emitView();
+  }
+
+  setLumaMetrics(input: { inkFieldMean: number; inkFieldMax: number; brightPixelRatio: number; lumaHistogram: number[] }): void {
+    const nextMean = Number.isFinite(input.inkFieldMean) ? Math.max(0, Math.min(1, input.inkFieldMean)) : 0;
+    const nextMax = Number.isFinite(input.inkFieldMax) ? Math.max(0, Math.min(1, input.inkFieldMax)) : 0;
+    const nextBright = Number.isFinite(input.brightPixelRatio) ? Math.max(0, Math.min(1, input.brightPixelRatio)) : 0;
+    const nextHist = Array.from({ length: 8 }, (_, i) => Math.max(0, input.lumaHistogram[i] ?? 0));
+    const changed =
+      this.inkFieldMean !== nextMean ||
+      this.inkFieldMax !== nextMax ||
+      this.brightPixelRatio !== nextBright ||
+      this.lumaHistogram.some((v, i) => v !== nextHist[i]);
+    if (!changed) return;
+    this.inkFieldMean = nextMean;
+    this.inkFieldMax = nextMax;
+    this.brightPixelRatio = nextBright;
+    this.lumaHistogram = nextHist;
+    this.emitView();
+  }
+
+  setLumaMetricsActual(input: { frameLumaMeanActual: number; frameLumaMaxActual: number; brightPixelRatioActual: number; frameLumaHistogramActual: number[] }): void {
+    const nextMean = Number.isFinite(input.frameLumaMeanActual) ? Math.max(0, Math.min(1, input.frameLumaMeanActual)) : 0;
+    const nextMax = Number.isFinite(input.frameLumaMaxActual) ? Math.max(0, Math.min(1, input.frameLumaMaxActual)) : 0;
+    const nextBright = Number.isFinite(input.brightPixelRatioActual) ? Math.max(0, Math.min(1, input.brightPixelRatioActual)) : 0;
+    const nextHist = Array.from({ length: 8 }, (_, i) => Math.max(0, input.frameLumaHistogramActual[i] ?? 0));
+    const changed =
+      this.frameLumaMeanActual !== nextMean ||
+      this.frameLumaMaxActual !== nextMax ||
+      this.brightPixelRatioActual !== nextBright ||
+      this.frameLumaHistogramActual.some((v, i) => v !== nextHist[i]);
+    if (!changed) return;
+    this.frameLumaMeanActual = nextMean;
+    this.frameLumaMaxActual = nextMax;
+    this.brightPixelRatioActual = nextBright;
+    this.frameLumaHistogramActual = nextHist;
+    this.emitView();
+  }
+
+  setShowLumaHistogram(next: boolean): void {
+    if (this.showLumaHistogram === next) return;
+    this.showLumaHistogram = next;
     this.emitView();
   }
 
@@ -347,6 +776,34 @@ export class AtomStore {
     this.emit();
   }
 
+  upsertAndActivateMessage(
+    atom: Omit<
+      Atom,
+      | "stableKey"
+      | "score"
+      | "sizeTier"
+      | "targetX"
+      | "targetY"
+      | "targetZ"
+      | "x"
+      | "y"
+      | "z"
+      | "renderSize"
+      | "treeDepth"
+      | "treeRole"
+      | "growthPhase"
+      | "parentId"
+      | "descendantCount"
+    >,
+    nowMs: number,
+  ): void {
+    this.upsertMany([atom]);
+    this.activateIncomingMessage(atom.id, nowMs);
+    this.visibleDirty = true;
+    this.layoutDirty = true;
+    this.emit();
+  }
+
   patchOne(patch: AtomPatch): void {
     const existing = this.atomMap.get(patch.id);
     if (!existing) return;
@@ -389,6 +846,53 @@ export class AtomStore {
     this.activeMessageCanonicalKey = null;
     this.taskPointCount = 0;
     this.promptLatencyMs = null;
+    this.inkFieldMean = 0;
+    this.inkFieldMax = 0;
+    this.brightPixelRatio = 0;
+    this.lumaHistogram = [0, 0, 0, 0, 0, 0, 0, 0];
+    this.frameLumaMeanActual = 0;
+    this.frameLumaMaxActual = 0;
+    this.brightPixelRatioActual = 0;
+    this.frameLumaHistogramActual = [0, 0, 0, 0, 0, 0, 0, 0];
+    this.logogramChannelCounts = { ring: 0, tendril: 0, hook: 0 };
+    this.ringContinuityScore = 0;
+    this.sweepProgress = 0;
+    this.injectorBBoxArea = 0;
+    this.ringCoverageRatio = 0;
+    this.ringBandOccupancyRatio = 0;
+    this.innerVoidRatio = 1;
+    this.innerVoidPenalty = 0;
+    this.centerMassRatio = 0;
+    this.sectorOccupancy = Array.from({ length: 12 }, () => 0);
+    this.ringSectorOccupancy = Array.from({ length: 12 }, () => 0);
+    this.solveEnergy = 0;
+    this.solveBreakdown = { eMask: 0, eContinuity: 0, eGap: 0, eThickness: 0, eVoid: 0, eRadius: 0, eSparsity: 0, total: 0 };
+    this.unwrapProfiles = { activationTheta: Array.from({ length: 192 }, () => 0), thicknessTheta: Array.from({ length: 192 }, () => 0), spurTheta: Array.from({ length: 192 }, () => 0) };
+    this.gapCountSolved = 0;
+    this.constraintViolationCount = 0;
+    this.shapeSignature = Array.from({ length: 24 }, () => 0);
+    this.signatureDistanceToCanonical = 0;
+    this.textureEntropy = 0;
+    this.radialVariance = 0;
+    this.arcSpacingVariance = 0;
+    this.repeatScore = 0;
+    this.generatedRadialProfile = Array.from({ length: 24 }, () => 0);
+    this.generatedAngularHistogram12 = Array.from({ length: 12 }, () => 0);
+    this.generatedGapCount = 0;
+    this.generatedFrayDensity = 0;
+    this.generatedStrokeWidthMean = 0;
+    this.generatedStrokeWidthVar = 0;
+    this.benchmarkEnabled = false;
+    this.benchmarkMode = "frozen_eval";
+    this.benchmarkSampleId = null;
+    this.benchmarkCandidateSetId = null;
+    this.benchmarkScoreTotal = 0;
+    this.benchmarkScoreStdDev = 0;
+    this.benchmarkPass = false;
+    this.benchmarkOverallPass = false;
+    this.benchmarkFpsWindowMin = 0;
+    this.benchmarkDistanceBreakdown = { radial: 0, angular: 0, gaps: 0, fray: 0, width: 0 };
+    this.fpsGuardrailPass = true;
     this.visibleAtomsCache = [];
     this.visibleDirty = true;
     this.layoutDirty = true;

@@ -1,34 +1,30 @@
-Key Characteristics of Heptapod B Logograms
-Circular Logograms: Each "word" or phrase is an inky circular symbol, which allows for the entire message to be understood at once, rather than in a step-by-step, linear fashion.
-Non-linear Syntax: Unlike human languages (A
-B
-C), Heptapod B sentences are, in theory, constructed as a whole. They do not rely on sequential word order, which is used to represent a non-linear perception of time.
-Semantic Units (12 Segments): The logograms are often analyzed by dividing them into 12 segments to identify repeating patterns.
-Visual Complexity: Thicker, more complex swirls indicate urgency or more complex thoughts, while thinner, simpler lines suggest a quieter tone.
-Modifiers: Specific "hooks" or small changes in the ink lines can change the meaning of a logogram, such as transforming a statement into a question. 
-YouTube
-YouTube
- +5
-The "Algorithm" of Analysis (Wolfram Method)
-To make the on-screen computers seem authentic, Christopher Wolfram of Wolfram Research developed a computational approach to analyze the logograms in the movie. The process mirrored how the linguist Louise Banks (Amy Adams) deciphers the language: 
-Wolfram Blog
-Wolfram Blog
- +2
-Image Segmentation: The logograms were treated as data, broken into 12 sections to identify key components.
-Pattern Matching: The algorithm looked for similarities between logograms to find root meanings (e.g., identifying that certain shapes meant "human" or "offer" across different sentences).
-Morphological Transformation: The analysis involved "skeletonizing" the images (reducing them to a 1-pixel wide line) and analyzing their structure.
-Semantic Consistency: While the onscreen language looks random, the designers aimed to create internal consistency where specific shapes represent specific concepts (even if this broke down under deep linguistic scrutiny). 
-YouTube
-YouTube
+n the 2016 film Arrival, logograms are the circular, ink-like symbols used by the alien race known as heptapods to communicate. Unlike human languages, which are linear, these logograms represent "Heptapod B," a non-linear visual language where a single complex circle can convey an entire sentence or thought simultaneously. 
+Medium
+Medium
  +4
-Real-World Scientific Context
-Sapir-Whorf Hypothesis: The film is based on the linguistic relativity hypothesis, which suggests that the language you speak determines (or influences) how you perceive the world.
-Variational Physics: The non-linear nature of the language is likened to Fermat’s Principle in physics, where light travels the fastest path, not just a straight path, implying an understanding of the end result before it happens.
-Machine Translation: The process used in the movie, where AI and algorithms find patterns in unfamiliar data to create a, "Rosetta Stone" for translation, is similar to how real-world artificial intelligence is used to analyze unknown systems. 
+Of Ensos and Logograms. What a Zen Buddhist symbol and an ...
+Arrival Logograms
+38 Logograms From Arrival : r/movies
+Arrival Movie Spoilers: Circle Alien Language Explained ...
+The logogram for “Life,” written in Heptapod B (the written ...
+Key Features of the Logograms
+Non-Linear Structure: Because heptapods do not experience time linearly, their writing has no beginning or end. A logogram's meaning is determined by the specific "inky" tendrils and variations in the ring's thickness.
+Design Inspiration: Production designer Patrice Vermette and artist Martine Bertrand created the symbols to look alien and organic, often compared to Zen ensō circles.
+The "Gift": In the film, the language is the "weapon" or gift the aliens provide; learning it allows humans to perceive time as the heptapods do, seeing the past, present, and future at once. 
 Reddit
 Reddit
  +5
-The full set of code used to analyze these symbols was released by Wolfram Research, allowing for the computational study of the 38 main logograms. 
+Dictionary and Development
+For the production, a functional dictionary of approximately 100 logograms was developed, with 71 appearing in the final film. 
 Science Fiction & Fantasy Stack Exchange
 Science Fiction & Fantasy Stack Exchange
- +1
+Scientific Validity: Christopher Wolfram (son of Stephen Wolfram) was consulted to create code and analysis tools that made the onscreen deciphering process look mathematically plausible.
+Common Logograms: Well-known symbols from the film include "Human," "Weapon," "Abbott," and "Costello". Fans often use these designs for tattoos, though some note that the symbol for the character "Louise" is frequently confused with the generic symbol for "Human". 
+Reddit
+Reddit
+ +5
+You can explore the actual code and a partial dictionary of the logograms in the Wolfram Research GitHub Repository. 
+Would you like to see a translation of a specific concept, or are you looking for tattoo inspiration for a particular word?
+
+
+https://www.google.com/search?q=logogram+from+arrival&sca_esv=0c0ded2c55dfde36&sxsrf=ANbL-n7JGgZE2dVxL0HIDKsWS8J-kIDUHA%3A1772641460846&ei=tFyoaeCvM7Oc0PEP1MCy2A0&biw=2188&bih=1506&ved=2ahUKEwjV7IKp-YaTAxURIjQIHUx2E8AQ0NsOegQIBBAB&uact=5&sclient=gws-wiz-serp&udm=50&fbs=ADc_l-aN0CWEZBOHjofHoaMMDiKpaEWjvZ2Py1XXV8d8KvlI3o6iwGk6Iv1tRbZIBNIVs-7DjmheGwJ9kkYLzOq5Q2x5_vUa7NlVh74273t1qYj0GD1vkYVaFIvIYcBAr4Up4b-5fwwevOzkL70zu1rZXIG3kdV2jyLDZJa2J4VgROT2n6_iW7H2bpng4BUOszKY5mOFMmbjCYZf_3N0Gli1-IlKr3WLkQ&aep=10&ntc=1&mstk=AUtExfDhg7kovUtn-99403Hh5stCQyjjAedkmKdio8nyp8cQ5kjMp2afOlcgYYGuEI72odnJKa_mXUx5Y2nLNtf8ZjTrKNVCrA24R9I_xcTlcKnk01uJOrKxQncEnRr35D49xMP5BpFziGcZl2qqjIV2d1hUStHm1RpPyANAVggeDzTCd98LS6B9u0IDR-UHF75GJqWjiYGtzFFl0_E6iWVtFNb3H59qALK7LlvV4A1_amc4niZlePr0dQ2WgA&csuir=1#:~:text=In%20the%202016,a%20particular%20word%3F

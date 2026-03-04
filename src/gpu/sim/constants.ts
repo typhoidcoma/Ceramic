@@ -28,3 +28,22 @@ export const QUALITY_PRESETS: Record<QualityTier, QualityPreset> = {
 };
 
 export const WORKGROUP_SIZE = 8;
+export const NOISE_OCTAVES_DEFAULT = 3;
+export const FRAY_DENSITY_DEFAULT = 0.5;
+export const CLUMP_DENSITY_DEFAULT = 0.5;
+export const STAMP_JITTER_TIME_SCALE = 0.32;
+export const BENCH_TARGET_FPS = 60;
+export const BENCH_MIN_FPS_WINDOW_MS = 2000;
+export const BENCH_MAX_ACTIVE_POINTS = 1000;
+export const BENCH_MAX_PREV_POINTS = 500;
+
+export const INK_FLUID_PROFILE = {
+  fogDensity: 0.9,
+  contrast: 1.12,
+  grainAmount: 0.02,
+  fogBaseLuma: 0.36,
+  pigmentAbsorption: 1.9,
+  carrierScattering: 0.22,
+  inkRetention: 0.989,
+  compositeMode: "subtractive_ink_v2",
+} as const;

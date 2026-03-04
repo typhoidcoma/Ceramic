@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ATOM_STATES, ATOM_TYPES, type TimelineSortMode } from "../data/types";
 import { startDataSync } from "../data/sync";
 import { generateAndInsertIncomingMessage } from "../data/llm";
 import { Renderer } from "../gpu/renderer";
-import { AtomStore, buildSeededDemoAtoms, type QualityTierOverride } from "./store";
+import { AtomStore } from "./store";
 
 const store = new AtomStore();
 type AppPhase = "syncing" | "ready";
@@ -17,22 +16,13 @@ function useStoreSnapshot() {
   return useMemo(() => store.getSnapshot(), [version]);
 }
 
-function urgencyBand(atomUrgency: number, due?: number): string {
-  if (due && due < Date.now()) return "overdue";
-  if (atomUrgency > 0.8) return "high";
-  if (atomUrgency > 0.55) return "medium";
-  return "low";
-}
-
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const searchRef = useRef<HTMLInputElement | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const snapshot = useStoreSnapshot();
   const [phase, setPhase] = useState<AppPhase>("syncing");
   const [syncError, setSyncError] = useState<string | null>(null);
   const [rendererError, setRendererError] = useState<string | null>(null);
-  const [sortMode, setSortMode] = useState<TimelineSortMode>("recent");
   const [llmBusy, setLlmBusy] = useState(false);
   const [llmStatus, setLlmStatus] = useState<string | null>(null);
   const [incomingPrompt, setIncomingPrompt] = useState("Summarize intent: we arrive with open hands.");
@@ -58,10 +48,8 @@ export function App() {
   useEffect(() => {
     let active = true;
     let cleanup: (() => void) | null = null;
-
     setPhase("syncing");
     setSyncError(null);
-
     void (async () => {
       const result = await startDataSync(store);
       if (!active) {
@@ -72,49 +60,11 @@ export function App() {
       setPhase("ready");
       if (result.state === "error") setSyncError(result.error ?? "Local sync failed.");
     })();
-
     return () => {
       active = false;
       cleanup?.();
     };
   }, []);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        const target = event.target as HTMLElement | null;
-        if (target?.tagName !== "INPUT" && target?.tagName !== "TEXTAREA") {
-          event.preventDefault();
-          searchRef.current?.focus();
-        }
-      }
-      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && snapshot.visibleCount > 0) {
-        const buckets = store.getTimelineBuckets(Date.now(), sortMode);
-        const flattened = buckets.flatMap((bucket) => bucket.items.map((atom, index) => ({ id: atom.id, bucketKey: bucket.key, index })));
-        const current = flattened.findIndex((entry) => entry.id === snapshot.selectedId);
-        const nextIndex = event.key === "ArrowDown" ? Math.min(flattened.length - 1, Math.max(0, current) + 1) : Math.max(0, (current < 0 ? 0 : current) - 1);
-        const next = flattened[nextIndex];
-        if (next) {
-          event.preventDefault();
-          store.setSelectedByIndex(next.bucketKey, next.index);
-        }
-      }
-      if (event.key === "Escape") {
-        store.setSelected(null);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [snapshot.selectedId, snapshot.visibleCount, sortMode]);
-
-  const timelineBuckets = useMemo(() => store.getTimelineBuckets(Date.now(), sortMode), [snapshot.visibleCount, snapshot.filters, sortMode]);
-  const selected = useMemo(() => store.getSelectedAtom(), [snapshot.selectedId, snapshot.totalCount]);
-
-  const onSeedDemo = () => {
-    store.clear();
-    store.upsertMany(buildSeededDemoAtoms(10000));
-    rendererRef.current?.resetView();
-  };
 
   const onGenerateLlmMessage = async () => {
     if (llmBusy) return;
@@ -128,14 +78,12 @@ export function App() {
     try {
       const result = await generateAndInsertIncomingMessage(prompt);
       store.setPromptLatencyMs(result.latencyMs);
-      if (result.ok) {
-        setLlmStatus(`Inserted ${result.canonicalKey}: ${result.text}`);
-      } else {
-        setLlmStatus(result.error);
+      if (result.ok && result.atom) {
+        store.upsertAndActivateMessage(result.atom, performance.now());
       }
+      setLlmStatus(result.ok ? `Inserted ${result.canonicalKey}` : result.error);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Failed to generate message.";
-      setLlmStatus(message);
+      setLlmStatus(error instanceof Error ? error.message : "Failed to generate message.");
     } finally {
       setLlmBusy(false);
     }
@@ -157,135 +105,85 @@ export function App() {
     <div className="smoke-shell">
       <canvas ref={canvasRef} className="smoke-canvas" />
 
-      <div className={`top-strip ${snapshot.overlayMinimized ? "min" : ""}`}>
+      <div className="top-strip">
         <div className="brand">Ceramic Arrival Field</div>
-        {!snapshot.overlayMinimized && (
-          <>
-            <input
-              ref={searchRef}
-              className="search"
-              placeholder="Search /"
-              value={snapshot.filters.query}
-              onChange={(event) => store.setQuery(event.target.value)}
-            />
-            <select className="select" value={sortMode} onChange={(event) => setSortMode(event.target.value as TimelineSortMode)}>
-              <option value="recent">Recent</option>
-              <option value="due">Due</option>
-              <option value="importance">Importance</option>
-            </select>
-            <select
-              className="select"
-              value={snapshot.qualityTierOverride}
-              onChange={(event) => store.setQualityTierOverride(event.target.value as QualityTierOverride)}
-            >
-              <option value="auto">Quality Auto</option>
-              <option value="safe">Quality Safe</option>
-              <option value="balanced">Quality Balanced</option>
-              <option value="high">Quality High</option>
-            </select>
-            <button className="chip" onClick={onSeedDemo}>Seed demo</button>
-            <button className="chip" onClick={() => store.setInspectorOpen(!snapshot.inspectorOpen)}>{snapshot.inspectorOpen ? "Hide inspector" : "Show inspector"}</button>
-            <button className="chip" onClick={() => store.setShowDiagnostics(!snapshot.showDiagnostics)}>{snapshot.showDiagnostics ? "Hide diagnostics" : "Show diagnostics"}</button>
-            <input
-              className="search"
-              placeholder="Incoming Prompt"
-              value={incomingPrompt}
-              onChange={(event) => setIncomingPrompt(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void onGenerateLlmMessage();
-                }
-              }}
-            />
-            <button className="chip" disabled={llmBusy} onClick={onGenerateLlmMessage}>
-              {llmBusy ? "Generating..." : "LLM message"}
-            </button>
-          </>
-        )}
-        <button className="chip" onClick={() => store.setOverlayMinimized(!snapshot.overlayMinimized)}>{snapshot.overlayMinimized ? "Expand" : "Minimize"}</button>
+        <input
+          className="search"
+          placeholder="Incoming Prompt"
+          value={incomingPrompt}
+          onChange={(event) => setIncomingPrompt(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void onGenerateLlmMessage();
+            }
+          }}
+        />
+        <button className="chip" disabled={llmBusy} onClick={onGenerateLlmMessage}>
+          {llmBusy ? "Generating..." : "Generate"}
+        </button>
+        <button className="chip" onClick={() => rendererRef.current?.resetView()}>Reset View</button>
       </div>
 
-      {!snapshot.overlayMinimized && (
-        <div className="filter-strip">
-          <div className="chips">
-            {ATOM_TYPES.map((type) => {
-              const active = snapshot.filters.types.has(type);
-              return (
-                <button key={type} className={`chip ${active ? "active" : ""}`} onClick={() => store.toggleType(type)}>
-                  {type}
-                </button>
-              );
-            })}
-          </div>
-          <div className="chips">
-            {ATOM_STATES.filter((state) => state !== "archived").map((state) => {
-              const active = snapshot.filters.states.has(state);
-              return (
-                <button key={state} className={`chip ${active ? "active" : ""}`} onClick={() => store.toggleState(state)}>
-                  {state}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {snapshot.inspectorOpen && (
-        <aside className="inspector-drawer">
-          <h2>Inspector</h2>
-          {!selected && <p className="muted">Select a task halo from the field.</p>}
-          {selected && (
-            <>
-              <div className="meta-grid">
-                <span>ID</span><strong>{selected.id}</strong>
-                <span>Type</span><strong>{selected.type}</strong>
-                <span>State</span><strong>{selected.state}</strong>
-                <span>Urgency</span><strong>{selected.urgency.toFixed(3)}</strong>
-                <span>Importance</span><strong>{selected.importance.toFixed(3)}</strong>
-                <span>Score</span><strong>{selected.score.toFixed(3)}</strong>
-              </div>
-              <h3>{selected.title ?? "Untitled"}</h3>
-              <p className="muted">{selected.preview ?? "No preview"}</p>
-              <pre>{JSON.stringify(selected.payload ?? {}, null, 2)}</pre>
-            </>
-          )}
-          <div className="timeline-mini">
-            {timelineBuckets.slice(0, 3).map((bucket) => (
-              <div key={bucket.key} className="bucket">
-                <h4>{bucket.label}</h4>
-                {bucket.items.slice(0, 8).map((atom) => (
-                  <button key={atom.id} className={`row ${snapshot.selectedId === atom.id ? "selected" : ""}`} onClick={() => store.setSelected(atom.id)}>
-                    <span className={`band ${urgencyBand(atom.urgency, atom.due)}`}>{urgencyBand(atom.urgency, atom.due)}</span>
-                    <span>{atom.title ?? atom.id}</span>
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        </aside>
-      )}
-
-      {snapshot.showDiagnostics && (
-        <div className="diagnostics">
-          <span>visible {snapshot.visibleCount.toLocaleString()}</span>
-          <span>total {snapshot.totalCount.toLocaleString()}</span>
-          <span>fps {snapshot.fps.toFixed(0)}</span>
-          <span>points {snapshot.taskPointCount.toLocaleString()}</span>
-          <span>
-            active {snapshot.activeMessageAtomId ? snapshot.activeMessageAtomId.slice(0, 8) : "-"}
-          </span>
-          <span>blend {snapshot.activeMessageBlend.toFixed(2)}</span>
-          <span>match {snapshot.activeMessageMatchSource}</span>
-          <span>key {snapshot.activeMessageCanonicalKey ?? "-"}</span>
-          <span>phrase {snapshot.activeMessageMatchedPhrase ?? "-"}</span>
-          <span>latency {snapshot.promptLatencyMs ?? "-"}ms</span>
-          <span>quality {snapshot.qualityTierOverride}</span>
-          {phase === "syncing" && <span>syncing</span>}
-          {syncError && <span className="error">sync error: {syncError}</span>}
-          {llmStatus && <span>{llmStatus}</span>}
-        </div>
-      )}
+      <div className="diagnostics">
+        <span>{phase === "syncing" ? "syncing" : "ready"}</span>
+        <span>sse {snapshot.sseStatus}</span>
+        <span>fps {snapshot.fps.toFixed(0)}</span>
+        <span>points {snapshot.taskPointCount.toLocaleString()}</span>
+        <span>zeroPointFrames {snapshot.zeroPointFrames}</span>
+        <span>active {snapshot.activeMessageAtomId ? snapshot.activeMessageAtomId.slice(0, 8) : "-"}</span>
+        <span>blend {snapshot.activeMessageBlend.toFixed(2)}</span>
+        <span>sweep {snapshot.sweepProgress.toFixed(2)}</span>
+        <span>continuity {snapshot.ringContinuityScore.toFixed(2)}</span>
+        <span>bbox {snapshot.injectorBBoxArea.toFixed(3)}</span>
+        <span>coverage {snapshot.ringCoverageRatio.toFixed(2)}</span>
+        <span>bandOcc {snapshot.ringBandOccupancyRatio.toFixed(2)}</span>
+        <span>void {snapshot.innerVoidRatio.toFixed(2)}</span>
+        <span>voidPenalty {snapshot.innerVoidPenalty.toFixed(2)}</span>
+        <span>centerMass {snapshot.centerMassRatio.toFixed(2)}</span>
+        <span>ch r:{snapshot.logogramChannelCounts.ring} t:{snapshot.logogramChannelCounts.tendril} h:{snapshot.logogramChannelCounts.hook}</span>
+        <span>sectors(all) [{snapshot.sectorOccupancy.join(",")} ]</span>
+        <span>sectors(ring) [{snapshot.ringSectorOccupancy.join(",")} ]</span>
+        <span>solveE {snapshot.solveEnergy.toFixed(3)}</span>
+        <span>solveParts m:{snapshot.solveBreakdown.eMask.toFixed(3)} c:{snapshot.solveBreakdown.eContinuity.toFixed(3)} g:{snapshot.solveBreakdown.eGap.toFixed(3)} t:{snapshot.solveBreakdown.eThickness.toFixed(3)} v:{snapshot.solveBreakdown.eVoid.toFixed(3)} r:{snapshot.solveBreakdown.eRadius.toFixed(3)} s:{snapshot.solveBreakdown.eSparsity.toFixed(3)}</span>
+        <span>gaps {snapshot.gapCountSolved}</span>
+        <span>violations {snapshot.constraintViolationCount}</span>
+        <span>sigDist {snapshot.signatureDistanceToCanonical.toFixed(3)}</span>
+        <span>texEntropy {snapshot.textureEntropy.toFixed(3)}</span>
+        <span>radVar {snapshot.radialVariance.toFixed(5)}</span>
+        <span>arcVar {snapshot.arcSpacingVariance.toFixed(5)}</span>
+        <span>repeat {snapshot.repeatScore.toFixed(3)}</span>
+        <span>bench {snapshot.benchmarkEnabled ? "on" : "off"}</span>
+        <span>benchMode {snapshot.benchmarkMode}</span>
+        <span>benchSample {snapshot.benchmarkSampleId ?? "-"}</span>
+        <span>benchSet {snapshot.benchmarkCandidateSetId ?? "-"}</span>
+        <span>benchScore {snapshot.benchmarkScoreTotal.toFixed(3)}</span>
+        <span>benchStd {snapshot.benchmarkScoreStdDev.toFixed(4)}</span>
+        <span>benchDist r:{snapshot.benchmarkDistanceBreakdown.radial.toFixed(3)} a:{snapshot.benchmarkDistanceBreakdown.angular.toFixed(3)} g:{snapshot.benchmarkDistanceBreakdown.gaps.toFixed(3)} f:{snapshot.benchmarkDistanceBreakdown.fray.toFixed(3)} w:{snapshot.benchmarkDistanceBreakdown.width.toFixed(3)}</span>
+        <span>benchPass {snapshot.benchmarkPass ? "yes" : "no"}</span>
+        <span>overallPass {snapshot.benchmarkOverallPass ? "yes" : "no"}</span>
+        <span>fpsMin2s {snapshot.benchmarkFpsWindowMin.toFixed(1)}</span>
+        <span>fpsGuard {snapshot.fpsGuardrailPass ? "pass" : "fail"}</span>
+        <span>sig [{snapshot.shapeSignature.slice(0, 12).map((v) => v.toFixed(2)).join(",")} ]</span>
+        <span>key {snapshot.activeMessageCanonicalKey ?? "-"}</span>
+        <span>latency {snapshot.promptLatencyMs ?? "-"}ms</span>
+        <span>lumaMean {snapshot.frameLumaMeanActual.toFixed(3)}</span>
+        <span>lumaMax {snapshot.frameLumaMaxActual.toFixed(3)}</span>
+        <span>bright&gt;.92 {(snapshot.brightPixelRatioActual * 100).toFixed(2)}%</span>
+        <span>target {(snapshot.sweepProgress < 0.8) ? "warming" : (snapshot.constraintViolationCount === 0 && snapshot.ringCoverageRatio >= 0.66 && snapshot.ringCoverageRatio <= 0.84 && snapshot.ringBandOccupancyRatio >= 0.7 && snapshot.innerVoidRatio >= 0.35 && snapshot.centerMassRatio <= 0.22 && snapshot.brightPixelRatioActual <= 0.02) ? "pass" : "tune"}</span>
+        {!snapshot.activeMessagePresent && <span className="error">warning: no active message</span>}
+        {snapshot.activeMessagePresent && !snapshot.hasTaskPoints && <span className="error">warning: active message but zero points</span>}
+        {snapshot.brightPixelRatioActual > 0.02 && <span className="error">warning: blowout risk</span>}
+        {snapshot.sweepProgress >= 0.8 && (snapshot.ringCoverageRatio < 0.66 || snapshot.ringCoverageRatio > 0.84) && <span className="error">warning: ring coverage out of target band</span>}
+        {snapshot.sweepProgress >= 0.8 && snapshot.ringBandOccupancyRatio < 0.7 && <span className="error">warning: ring band occupancy low</span>}
+        {snapshot.constraintViolationCount > 0 && <span className="error">warning: solver constraints violated</span>}
+        {snapshot.innerVoidRatio < 0.35 && <span className="error">warning: inner void collapsed</span>}
+        {snapshot.centerMassRatio > 0.22 && <span className="error">warning: center mass too high</span>}
+        {snapshot.repeatScore > 0.18 && <span className="error">warning: texture repetition risk</span>}
+        {snapshot.benchmarkPass && !snapshot.fpsGuardrailPass && <span className="error">warning: benchmark pass invalid (fps guardrail failed)</span>}
+        {syncError && <span className="error">sync error: {syncError}</span>}
+        {llmStatus && <span>{llmStatus}</span>}
+      </div>
     </div>
   );
 }

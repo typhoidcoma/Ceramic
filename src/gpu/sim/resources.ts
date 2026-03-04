@@ -2,8 +2,10 @@ export type SimulationResources = {
   simWidth: number;
   simHeight: number;
   cellCount: number;
-  densityRead: GPUBuffer;
-  densityWrite: GPUBuffer;
+  carrierRead: GPUBuffer;
+  carrierWrite: GPUBuffer;
+  pigmentRead: GPUBuffer;
+  pigmentWrite: GPUBuffer;
   velocityRead: GPUBuffer;
   velocityWrite: GPUBuffer;
   pressureRead: GPUBuffer;
@@ -28,8 +30,10 @@ export function createSimulationResources(device: GPUDevice, simWidth: number, s
     simWidth,
     simHeight,
     cellCount,
-    densityRead: createStorageBuffer(device, "density-read", scalarSize),
-    densityWrite: createStorageBuffer(device, "density-write", scalarSize),
+    carrierRead: createStorageBuffer(device, "carrier-read", scalarSize),
+    carrierWrite: createStorageBuffer(device, "carrier-write", scalarSize),
+    pigmentRead: createStorageBuffer(device, "pigment-read", scalarSize),
+    pigmentWrite: createStorageBuffer(device, "pigment-write", scalarSize),
     velocityRead: createStorageBuffer(device, "velocity-read", vec2Size),
     velocityWrite: createStorageBuffer(device, "velocity-write", vec2Size),
     pressureRead: createStorageBuffer(device, "pressure-read", scalarSize),

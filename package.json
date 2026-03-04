@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "dev:server": "tsx watch server/index.ts",
     "dev:all": "concurrently -k -n server,web -c cyan,magenta \"npm run dev:server\" \"npm run dev\"",
+    "benchmark:import:wolfram": "tsx tools/reference/importScriptLogoJpegs.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
@@ -17,6 +18,7 @@
     "express": "^5.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "sharp": "^0.34.4",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
     "zod": "^4.1.11"

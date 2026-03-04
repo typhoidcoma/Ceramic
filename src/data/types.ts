@@ -50,8 +50,21 @@ export type DictionaryEntry = {
   phrase: string;
   canonicalKey: string;
   segmentMask: number;
-  style: Record<string, unknown>;
+  style: LogogramStyle;
   language: string;
+};
+
+export type LogogramStyle = {
+  ring_bias?: number;
+  gap_bias?: number;
+  tendril_bias?: number;
+  hook_bias?: number;
+  continuity_bias?: number;
+  sweep_bias?: number;
+  fray_bias?: number;
+  curvatureBias?: number;
+  thicknessBias?: number;
+  hookBias?: number;
 };
 
 export type MatchedLogogram = {
@@ -61,7 +74,59 @@ export type MatchedLogogram = {
   matchedPhrase?: string;
   messageHash: string;
   segmentMask: number;
-  style: Record<string, unknown>;
+  style: LogogramStyle;
+};
+
+export type LogogramSolveBreakdown = {
+  eMask: number;
+  eContinuity: number;
+  eGap: number;
+  eThickness: number;
+  eVoid: number;
+  eRadius: number;
+  eSparsity: number;
+  total: number;
+};
+
+export type BenchmarkMode = "live" | "frozen_eval";
+
+export type ReferenceMaskStats = {
+  ringCoverage: number;
+  gapCount: number;
+  radialProfile: number[];
+  angularHistogram12: number[];
+  frayDensity: number;
+  strokeWidthMean: number;
+  strokeWidthVar: number;
+};
+
+export type ReferenceLogogramSample = {
+  id: string;
+  sourcePath: string;
+  label: string;
+  tags?: string[];
+  aliases?: string[];
+  maskStats: ReferenceMaskStats;
+};
+
+export type ReferenceBenchmarkDistance = {
+  radial: number;
+  angular: number;
+  gaps: number;
+  fray: number;
+  width: number;
+  total: number;
+};
+
+export type ReferenceBenchmarkResult = {
+  canonicalKey: string;
+  sampleId: string;
+  candidateSetId: string;
+  distance: ReferenceBenchmarkDistance;
+  pass: boolean;
+  stabilityStdDev: number;
+  fpsWindowMin: number;
+  overallPass: boolean;
 };
 
 export type TimelineBucket = {

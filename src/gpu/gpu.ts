@@ -13,7 +13,12 @@ export async function initWebGpu(canvas: HTMLCanvasElement): Promise<GpuContext>
   if (!adapter) {
     throw new Error("No compatible GPU adapter found.");
   }
-  const device = await adapter.requestDevice();
+  const requestedStorageBuffers = Math.min(10, adapter.limits.maxStorageBuffersPerShaderStage);
+  const device = await adapter.requestDevice({
+    requiredLimits: {
+      maxStorageBuffersPerShaderStage: requestedStorageBuffers,
+    },
+  });
   const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
   if (!context) {
     throw new Error("Could not acquire WebGPU canvas context.");
@@ -23,6 +28,7 @@ export async function initWebGpu(canvas: HTMLCanvasElement): Promise<GpuContext>
     device,
     format,
     alphaMode: "opaque",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
   });
   return { adapter, device, context, format };
 }

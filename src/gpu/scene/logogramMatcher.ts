@@ -22,6 +22,10 @@ function extractPayloadCanonicalKey(payload: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function isUnknownCanonicalKey(key: string): boolean {
+  return key.startsWith("unknown:");
+}
+
 function hashToHex8(value: number): string {
   return (value >>> 0).toString(16).padStart(8, "0");
 }
@@ -37,15 +41,29 @@ function warnOnce(reason: "invalid_key" | "dictionary_unavailable", detail: Reco
 
 function buildUnknownMatch(message: string, atomId: string): MatchedLogogram {
   const seed = hashStringU32(`${message}|${atomId}`);
+  const ringBias = 0.58 + (((seed >>> 2) & 0xff) / 255) * 0.34;
+  const gapBias = 0.14 + (((seed >>> 7) & 0xff) / 255) * 0.2;
+  const tendrilBias = 0.28 + (((seed >>> 12) & 0xff) / 255) * 0.38;
+  const hookBias = 0.2 + (((seed >>> 17) & 0xff) / 255) * 0.32;
+  const continuityBias = 0.62 + (((seed >>> 22) & 0xff) / 255) * 0.26;
+  const sweepBias = 0.4 + (((seed >>> 27) & 0x1f) / 31) * 0.5;
+  const frayBias = 0.42 + (((seed >>> 5) & 0xff) / 255) * 0.26;
   return {
     source: "unknown",
     canonicalKey: `unknown:${hashToHex8(seed)}`,
     messageHash: hashToHex8(seed),
     segmentMask: (seed ^ (seed >>> 7)) & 0x0fff,
     style: {
+      ring_bias: ringBias,
+      gap_bias: gapBias,
+      tendril_bias: tendrilBias,
+      hook_bias: hookBias,
+      continuity_bias: continuityBias,
+      sweep_bias: sweepBias,
+      fray_bias: frayBias,
       curvatureBias: (((seed >>> 3) & 0xff) / 255) * 0.8 + 0.1,
       thicknessBias: (((seed >>> 11) & 0xff) / 255) * 0.8 + 0.1,
-      hookBias: (((seed >>> 19) & 0xff) / 255) * 0.6,
+      hookBias: hookBias,
     },
   };
 }
@@ -60,6 +78,9 @@ export function matchLogogramFromMessage(atom: Atom): MatchedLogogram {
   const canonicalMap = getDictionaryByCanonical();
   const payloadKey = extractPayloadCanonicalKey(atom.payload);
   if (payloadKey) {
+    if (isUnknownCanonicalKey(payloadKey)) {
+      return buildUnknownMatch(normalized || atom.id, atom.id);
+    }
     const entry = canonicalMap.get(payloadKey);
     if (entry) {
       const hash = hashToHex8(hashStringU32(normalized || atom.id));

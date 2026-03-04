@@ -1,22 +1,60 @@
 import type { Atom } from "../../data/types";
 import type { AtomStore } from "../../app/store";
-import { createTaskBuffer, createUniformBuffer, writeTaskPoints, writeUniforms, type RendererConfig } from "../buffers";
+import { createTaskBuffer, createUniformBuffer, writeTaskPoints, writeUniforms, type RendererConfig, type TaskPoint } from "../buffers";
 import { initWebGpu } from "../gpu";
 import { createPipelineBundle } from "../pipeline";
-import { BASE_TILE_SIZE, QUALITY_PRESETS, type QualityTier } from "../sim/constants";
+import { BASE_TILE_SIZE, INK_FLUID_PROFILE, QUALITY_PRESETS, type QualityTier } from "../sim/constants";
 import { createSimulationSystem, drawVolume, runSimulationStep, type SimulationSystem } from "../sim/system";
-import { buildTaskFieldPointsSingleActive, getLastTaskFieldMatchMeta } from "../scene/taskField";
+import { buildTaskFieldPointsSingleActive, getLastTaskFieldMatchMeta, getLastTaskFieldStats } from "../scene/taskField";
 import { createCamera3D, projectAtomToScreen, tickCamera, type Camera3DState } from "../scene/camera3d";
+import { LumaReadback } from "../sim/passes/lumaReadback";
+import { BenchmarkRuntime } from "../../benchmark/runtime";
+import { BENCH_TARGET_FPS } from "../sim/constants";
+import type { BenchmarkMode } from "../../data/types";
 
 const DEFAULT_CONFIG: RendererConfig = {
   qualityTier: "auto",
   simResolutionScale: QUALITY_PRESETS.balanced.simResolutionScale,
   pressureIterations: QUALITY_PRESETS.balanced.pressureIterations,
-  haloStrength: 0.95,
-  fogDensity: 0.94,
-  contrast: 1.16,
-  grainAmount: 0.06,
+  fogDensity: INK_FLUID_PROFILE.fogDensity,
+  contrast: INK_FLUID_PROFILE.contrast,
+  grainAmount: INK_FLUID_PROFILE.grainAmount,
+  fogBaseLuma: INK_FLUID_PROFILE.fogBaseLuma,
+  pigmentAbsorption: INK_FLUID_PROFILE.pigmentAbsorption,
+  carrierScattering: INK_FLUID_PROFILE.carrierScattering,
+  inkRetention: INK_FLUID_PROFILE.inkRetention,
+  compositeMode: INK_FLUID_PROFILE.compositeMode,
 };
+
+function clamp01(value: number): number {
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+
+function estimateLumaMetrics(points: TaskPoint[], config: RendererConfig): { inkFieldMean: number; inkFieldMax: number; brightPixelRatio: number; lumaHistogram: number[] } {
+  if (points.length === 0) return { inkFieldMean: 0, inkFieldMax: 0, brightPixelRatio: 0, lumaHistogram: [0, 0, 0, 0, 0, 0, 0, 0] };
+  let sumInk = 0;
+  let maxInk = 0;
+  let bright = 0;
+  const hist = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (const p of points) {
+    const energy = clamp01((p.ink * 0.62 + p.coherence * 0.38) * (0.55 + p.radius * 12));
+    sumInk += energy;
+    maxInk = Math.max(maxInk, energy);
+    const l = clamp01(config.fogBaseLuma * Math.exp(-energy * config.pigmentAbsorption));
+    const bucket = Math.min(hist.length - 1, Math.floor(l * hist.length));
+    hist[bucket] += 1;
+    if (l > 0.92) bright += 1;
+  }
+  const count = points.length;
+  return {
+    inkFieldMean: sumInk / count,
+    inkFieldMax: maxInk,
+    brightPixelRatio: bright / count,
+    lumaHistogram: hist.map((v) => v / count),
+  };
+}
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
@@ -37,6 +75,13 @@ export class Renderer {
   private qualityDownTicks = 0;
   private qualityUpTicks = 0;
   private pointer = { x: 0, y: 0 };
+  private lumaReadback: LumaReadback | null = null;
+  private lumaReadbackCounter = 0;
+  private benchmarkRuntime = new BenchmarkRuntime();
+  private benchmarkCounter = 0;
+  private benchmarkMode: BenchmarkMode = "frozen_eval";
+  private freezeToken: number | null = null;
+  private freezeForAtomId: string | null = null;
 
   constructor(canvas: HTMLCanvasElement, store: AtomStore, initial?: Partial<RendererConfig>) {
     this.canvas = canvas;
@@ -55,6 +100,7 @@ export class Renderer {
     this.pipelines = createPipelineBundle(this.gpu.device, this.gpu.format);
     this.uniformBuffer = createUniformBuffer(this.gpu.device);
     this.taskBuffer = createTaskBuffer(this.gpu.device);
+    this.lumaReadback = new LumaReadback(this.gpu.device);
     this.resize();
     this.rebuildSimulation();
     this.attachInputHandlers();
@@ -107,12 +153,74 @@ export class Renderer {
     tickCamera(this.camera, dtSec);
 
     const snapshot = this.store.getSnapshot();
-    const atoms = this.store.getVisibleAtoms();
-    const points = buildTaskFieldPointsSingleActive(atoms, activeState, snapshot.selectedId, snapshot.hoveredId, t);
+    const allAtoms = this.store.getAtoms();
+    const visibleAtoms = this.store.getVisibleAtoms();
+    if (this.benchmarkMode === "frozen_eval") {
+      if (this.freezeForAtomId !== activeState.activeMessageAtomId) {
+        this.freezeForAtomId = activeState.activeMessageAtomId;
+        this.freezeToken = Math.floor(t);
+      }
+    } else {
+      this.freezeForAtomId = null;
+      this.freezeToken = null;
+    }
+    const points = buildTaskFieldPointsSingleActive(
+      allAtoms,
+      activeState,
+      snapshot.selectedId,
+      snapshot.hoveredId,
+      t,
+      this.benchmarkMode,
+      this.freezeToken,
+    );
     const taskCount = writeTaskPoints(this.gpu.device, this.taskBuffer, points);
     this.store.setTaskPointCount(taskCount);
+    this.store.setLumaMetrics(estimateLumaMetrics(points, this.config));
     const matchMeta = getLastTaskFieldMatchMeta();
     this.store.setActiveMessageMatchMeta(matchMeta.source, matchMeta.matchedPhrase, matchMeta.canonicalKey);
+    const taskStats = getLastTaskFieldStats();
+    this.store.setLogogramDiagnostics(taskStats);
+    if (this.benchmarkCounter % 10 === 0) {
+      void this.benchmarkRuntime
+        .tick({
+          nowMs: t,
+          benchmarkMode: this.benchmarkMode,
+          freezeToken: this.freezeToken,
+          canonicalKey: matchMeta.canonicalKey,
+          sweepProgress: taskStats.sweepProgress,
+          fps: dtSec > 0 ? 1 / dtSec : 0,
+          taskStats: {
+            ringCoverageRatio: taskStats.ringCoverageRatio,
+            ringSectorOccupancy: taskStats.ringSectorOccupancy,
+            sectorOccupancy: taskStats.sectorOccupancy,
+            ringBandOccupancyRatio: taskStats.ringBandOccupancyRatio,
+            innerVoidPenalty: taskStats.innerVoidPenalty,
+            logogramChannelCounts: taskStats.channelCounts,
+            generatedRadialProfile: taskStats.generatedRadialProfile,
+            generatedAngularHistogram12: taskStats.generatedAngularHistogram12,
+            generatedGapCount: taskStats.generatedGapCount,
+            generatedFrayDensity: taskStats.generatedFrayDensity,
+            generatedStrokeWidthMean: taskStats.generatedStrokeWidthMean,
+            generatedStrokeWidthVar: taskStats.generatedStrokeWidthVar,
+          },
+        })
+        .then((bench) => {
+          this.store.setBenchmarkDiagnostics({
+            enabled: bench.enabled,
+            mode: this.benchmarkMode,
+            sampleId: bench.result?.sampleId ?? null,
+            candidateSetId: bench.result?.candidateSetId ?? bench.candidateSetId,
+            scoreTotal: bench.result?.distance.total ?? 0,
+            scoreStdDev: bench.result?.stabilityStdDev ?? bench.stabilityStdDev,
+            pass: bench.result?.pass ?? false,
+            overallPass: bench.result?.overallPass ?? bench.overallPass,
+            fpsWindowMin: bench.result?.fpsWindowMin ?? 0,
+            distance: bench.result?.distance ?? { radial: 0, angular: 0, gaps: 0, fray: 0, width: 0, total: 0 },
+            fpsGuardrailPass: bench.fpsGuardrailPass,
+          });
+        });
+    }
+    this.benchmarkCounter += 1;
 
     const selected = this.store.getSelectedAtom();
     const hovered = this.store.getHoveredAtom();
@@ -133,7 +241,6 @@ export class Renderer {
       nowSec: t / 1000,
       dtSec,
       fogDensity: this.config.fogDensity,
-      haloStrength: this.config.haloStrength,
       contrast: this.config.contrast,
       grainAmount: this.config.grainAmount,
       taskCount,
@@ -142,14 +249,30 @@ export class Renderer {
       hoveredX: hoveredNorm.x,
       hoveredY: hoveredNorm.y,
       compositeSamples: preset.compositeSamples,
+      fogBaseLuma: this.config.fogBaseLuma,
+      pigmentAbsorption: this.config.pigmentAbsorption,
+      carrierScattering: this.config.carrierScattering,
+      inkRetention: this.config.inkRetention,
     });
 
     const encoder = this.gpu.device.createCommandEncoder();
     runSimulationStep(encoder, this.simulation, this.pipelines, pressureIterations);
-    drawVolume(encoder, this.gpu.context.getCurrentTexture().createView(), this.simulation, this.pipelines);
+    const currentTexture = this.gpu.context.getCurrentTexture();
+    drawVolume(encoder, currentTexture.createView(), this.simulation, this.pipelines);
+    const shouldReadLuma = this.lumaReadbackCounter % 10 === 0;
+    if (shouldReadLuma && this.lumaReadback) {
+      this.lumaReadback.enqueueCopy(encoder, currentTexture, this.canvas.width, this.canvas.height);
+    }
     this.gpu.device.queue.submit([encoder.finish()]);
+    if (shouldReadLuma && this.lumaReadback) {
+      void this.lumaReadback.readMetrics().then((metrics) => {
+        if (!metrics) return;
+        this.store.setLumaMetricsActual(metrics);
+      });
+    }
+    this.lumaReadbackCounter += 1;
 
-    this.updateHoverFromPointer(atoms);
+    this.updateHoverFromPointer(visibleAtoms);
 
     this.frameCount += 1;
     const elapsed = t - this.fpsWindowStart;
@@ -168,13 +291,13 @@ export class Renderer {
     if (override !== "auto") return;
     const rank = (tier: QualityTier) => (tier === "safe" ? 1 : tier === "balanced" ? 2 : 3);
     const fromRank = rank(this.activeTier);
-    const down = fps < 52;
-    const up = fps > 58;
+    const down = fps < BENCH_TARGET_FPS;
+    const up = fps > BENCH_TARGET_FPS + 2;
 
     if (down) {
       this.qualityDownTicks += 1;
       this.qualityUpTicks = 0;
-      if (this.qualityDownTicks >= 4 && fromRank > 1) {
+      if (this.qualityDownTicks >= 2 && fromRank > 1) {
         this.activeTier = fromRank === 3 ? "balanced" : "safe";
         this.qualityDownTicks = 0;
         this.rebuildSimulation();
@@ -185,7 +308,7 @@ export class Renderer {
     if (up) {
       this.qualityUpTicks += 1;
       this.qualityDownTicks = 0;
-      if (this.qualityUpTicks >= 8 && fromRank < 3) {
+      if (this.qualityUpTicks >= 10 && fromRank < 3) {
         this.activeTier = fromRank === 1 ? "balanced" : "high";
         this.qualityUpTicks = 0;
         this.rebuildSimulation();

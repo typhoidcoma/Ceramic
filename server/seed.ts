@@ -62,6 +62,14 @@ export async function seedDictionary(db: Database): Promise<void> {
     const hash = hashString(canonicalKey);
     const segmentMask = ((hash ^ (hash >>> 8)) & 0x0fff) || 1;
     const style = {
+      ring_bias: (((hash >>> 1) & 0xff) / 255) * 0.8 + 0.1,
+      gap_bias: (((hash >>> 5) & 0xff) / 255) * 0.6,
+      tendril_bias: (((hash >>> 9) & 0xff) / 255) * 0.7,
+      hook_bias: (((hash >>> 13) & 0xff) / 255) * 0.7,
+      continuity_bias: (((hash >>> 17) & 0xff) / 255) * 0.8 + 0.1,
+      sweep_bias: (((hash >>> 21) & 0xff) / 255) * 0.8 + 0.1,
+      fray_bias: (((hash >>> 25) & 0x7f) / 127) * 0.8 + 0.1,
+      // legacy compatibility fields
       curvatureBias: (((hash >>> 4) & 0xff) / 255) * 0.8 + 0.1,
       thicknessBias: (((hash >>> 12) & 0xff) / 255) * 0.8 + 0.1,
       hookBias: (((hash >>> 20) & 0xff) / 255) * 0.7,

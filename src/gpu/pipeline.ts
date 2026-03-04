@@ -1,4 +1,5 @@
-import shaderCode from "./sim/shaders.wgsl?raw";
+import computeShaderCode from "./sim/shaders.wgsl?raw";
+import renderShaderCode from "./sim/shaders.render.wgsl?raw";
 
 export type PipelineBundle = {
   computeBindGroupLayout: GPUBindGroupLayout;
@@ -14,7 +15,8 @@ export type PipelineBundle = {
 };
 
 export function createPipelineBundle(device: GPUDevice, format: GPUTextureFormat): PipelineBundle {
-  const module = device.createShaderModule({ code: shaderCode });
+  const computeModule = device.createShaderModule({ code: computeShaderCode });
+  const renderModule = device.createShaderModule({ code: renderShaderCode });
 
   const computeBindGroupLayout = device.createBindGroupLayout({
     entries: [
@@ -23,10 +25,12 @@ export function createPipelineBundle(device: GPUDevice, format: GPUTextureFormat
       { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
       { binding: 3, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
       { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-      { binding: 5, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
       { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-      { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-      { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 10, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
     ],
   });
 
@@ -34,7 +38,7 @@ export function createPipelineBundle(device: GPUDevice, format: GPUTextureFormat
     entries: [
       { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
       { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
-      { binding: 8, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+      { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
     ],
   });
 
@@ -44,14 +48,14 @@ export function createPipelineBundle(device: GPUDevice, format: GPUTextureFormat
   const makeCompute = (entryPoint: string) =>
     device.createComputePipeline({
       layout: computeLayout,
-      compute: { module, entryPoint },
+      compute: { module: computeModule, entryPoint },
     });
 
   const render = device.createRenderPipeline({
     layout: renderLayout,
-    vertex: { module, entryPoint: "vs_fullscreen" },
+    vertex: { module: renderModule, entryPoint: "vs_fullscreen" },
     fragment: {
-      module,
+      module: renderModule,
       entryPoint: "fs_volume",
       targets: [
         {

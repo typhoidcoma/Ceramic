@@ -39,14 +39,16 @@ export function createSimulationSystem(
     layout: pipelines.computeBindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: { buffer: resources.densityRead } },
-      { binding: 2, resource: { buffer: resources.densityWrite } },
-      { binding: 3, resource: { buffer: resources.velocityRead } },
-      { binding: 4, resource: { buffer: resources.velocityWrite } },
-      { binding: 5, resource: { buffer: resources.pressureRead } },
-      { binding: 6, resource: { buffer: resources.pressureWrite } },
-      { binding: 7, resource: { buffer: resources.divergence } },
-      { binding: 8, resource: { buffer: taskBuffer } },
+      { binding: 1, resource: { buffer: resources.carrierRead } },
+      { binding: 2, resource: { buffer: resources.carrierWrite } },
+      { binding: 3, resource: { buffer: resources.pigmentRead } },
+      { binding: 4, resource: { buffer: resources.pigmentWrite } },
+      { binding: 5, resource: { buffer: resources.velocityRead } },
+      { binding: 6, resource: { buffer: resources.velocityWrite } },
+      { binding: 7, resource: { buffer: resources.pressureRead } },
+      { binding: 8, resource: { buffer: resources.pressureWrite } },
+      { binding: 9, resource: { buffer: resources.divergence } },
+      { binding: 10, resource: { buffer: taskBuffer } },
     ],
   });
 
@@ -54,8 +56,8 @@ export function createSimulationSystem(
     layout: pipelines.renderBindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: { buffer: resources.densityRead } },
-      { binding: 8, resource: { buffer: taskBuffer } },
+      { binding: 1, resource: { buffer: resources.carrierRead } },
+      { binding: 2, resource: { buffer: resources.pigmentRead } },
     ],
   });
 
@@ -82,7 +84,6 @@ function dispatchAll(
     width: system.resources.simWidth,
     height: system.resources.simHeight,
   };
-  runInjectionPass(ctx, pipelines.injection);
   runVelocityPass(ctx, pipelines.velocity);
   runAdvectionPass(ctx, pipelines.advection);
   runDivergencePass(ctx, pipelines.divergence);
@@ -91,6 +92,7 @@ function dispatchAll(
   }
   runProjectionPass(ctx, pipelines.projection);
   runDampPass(ctx, pipelines.damp);
+  runInjectionPass(ctx, pipelines.injection);
 }
 
 export function runSimulationStep(
@@ -105,7 +107,8 @@ export function runSimulationStep(
 
   const scalarBytes = system.resources.cellCount * 4;
   const vec2Bytes = system.resources.cellCount * 8;
-  copyBuffer(encoder, system.resources.densityWrite, system.resources.densityRead, scalarBytes);
+  copyBuffer(encoder, system.resources.carrierWrite, system.resources.carrierRead, scalarBytes);
+  copyBuffer(encoder, system.resources.pigmentWrite, system.resources.pigmentRead, scalarBytes);
   copyBuffer(encoder, system.resources.velocityWrite, system.resources.velocityRead, vec2Bytes);
   copyBuffer(encoder, system.resources.pressureWrite, system.resources.pressureRead, scalarBytes);
 }

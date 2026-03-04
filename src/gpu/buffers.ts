@@ -1,16 +1,20 @@
 import { MAX_TASK_POINTS } from "./sim/constants";
 
-export const SIM_UNIFORMS_FLOATS = 16;
+export const SIM_UNIFORMS_FLOATS = 20;
 export const TASK_POINT_FLOATS = 12;
 
 export type RendererConfig = {
   qualityTier: "auto" | "safe" | "balanced" | "high";
   simResolutionScale: number;
   pressureIterations: number;
-  haloStrength: number;
   fogDensity: number;
   contrast: number;
   grainAmount: number;
+  fogBaseLuma: number;
+  pigmentAbsorption: number;
+  carrierScattering: number;
+  inkRetention: number;
+  compositeMode: "subtractive_ink_v2";
 };
 
 export type TaskPoint = {
@@ -52,7 +56,6 @@ export type UniformWriteInput = {
   nowSec: number;
   dtSec: number;
   fogDensity: number;
-  haloStrength: number;
   contrast: number;
   grainAmount: number;
   taskCount: number;
@@ -61,6 +64,10 @@ export type UniformWriteInput = {
   hoveredX: number;
   hoveredY: number;
   compositeSamples: number;
+  fogBaseLuma: number;
+  pigmentAbsorption: number;
+  carrierScattering: number;
+  inkRetention: number;
 };
 
 export function writeUniforms(device: GPUDevice, buffer: GPUBuffer, input: UniformWriteInput): void {
@@ -72,15 +79,19 @@ export function writeUniforms(device: GPUDevice, buffer: GPUBuffer, input: Unifo
   values[4] = input.nowSec;
   values[5] = input.dtSec;
   values[6] = input.fogDensity;
-  values[7] = input.haloStrength;
-  values[8] = input.contrast;
-  values[9] = input.grainAmount;
-  values[10] = input.taskCount;
-  values[11] = input.selectedX;
-  values[12] = input.selectedY;
-  values[13] = input.hoveredX;
-  values[14] = input.hoveredY;
-  values[15] = input.compositeSamples;
+  values[7] = input.contrast;
+  values[8] = input.grainAmount;
+  values[9] = input.taskCount;
+  values[10] = input.selectedX;
+  values[11] = input.selectedY;
+  values[12] = input.hoveredX;
+  values[13] = input.hoveredY;
+  values[14] = input.compositeSamples;
+  values[15] = input.fogBaseLuma;
+  values[16] = input.pigmentAbsorption;
+  values[17] = input.carrierScattering;
+  values[18] = input.inkRetention;
+  values[19] = 0;
   device.queue.writeBuffer(buffer, 0, values.buffer);
 }
 

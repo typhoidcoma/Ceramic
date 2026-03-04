@@ -21,7 +21,7 @@ npm install
 2. Create `.env.local` from `.env.example` and set:
 
 ```env
-VITE_API_BASE_URL=http://localhost:8787
+VITE_API_BASE_URL=http://127.0.0.1:8787
 OPENAI_API_KEY=your_openai_api_key
 OPENAI_MODEL=gpt-4.1-mini
 PORT=8787
@@ -48,6 +48,27 @@ npm run build
 - `GET /api/dictionary?language=heptapod_b_v1&limit=200`
 - `POST /api/messages/generate`
 - `GET /api/events` (SSE)
+- `GET /api/benchmark/references`
+
+## Wolfram Morphology Benchmark
+
+1. Import and cache Wolfram `ScriptLogoJpegs` locally:
+
+```bash
+npm run benchmark:import:wolfram
+```
+
+2. This writes:
+- `data/reference/arrival-script-logo-jpegs/*`
+- `data/reference/manifest.json`
+
+3. Start app with `npm run dev:all`. Diagnostics will show benchmark status:
+- `bench on/off`
+- `benchScore`
+- `benchPass`
+- `fpsGuard`
+
+Benchmark pass requires morphology threshold pass and strict FPS guardrail (`>= 60 FPS` over rolling window).
 
 ## Notes
 
