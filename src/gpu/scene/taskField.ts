@@ -132,8 +132,8 @@ function computeBounds(atoms: Atom[]): Bounds {
   return { minX, maxX, minY, maxY, minZ, maxZ };
 }
 
-const ACTIVE_SAMPLE_BUDGET = Math.min(1300, BENCH_MAX_ACTIVE_POINTS);
-const PREV_SAMPLE_BUDGET = Math.min(700, BENCH_MAX_PREV_POINTS);
+const ACTIVE_SAMPLE_BUDGET = Math.min(2200, BENCH_MAX_ACTIVE_POINTS);
+const PREV_SAMPLE_BUDGET = Math.min(1100, BENCH_MAX_PREV_POINTS);
 const MAX_LOGOGRAM_CACHE = 256;
 const RING_BAND_MIN_RADIUS_NORM = 0.18;
 const RING_BAND_MAX_RADIUS_NORM = 0.38;
@@ -196,14 +196,14 @@ function pushAtomPoints(
   const centerZ = norm(atom.z, bounds.minZ, bounds.maxZ);
   const selected = atom.id === selectedId ? 1 : 0;
   const hovered = atom.id === hoveredId ? 1 : 0;
-  const baseRadius = (0.0052 + 0.0074 * (0.45 * urgency + 0.55 * importance)) * (0.58 + 0.42 * weight);
+  const baseRadius = (0.0041 + 0.0062 * (0.45 * urgency + 0.55 * importance)) * (0.6 + 0.4 * weight);
   const emphasis = selected ? 1.28 : hovered ? 1.14 : 1;
   const dictionaryBoost = match.source === "dictionary" ? 1.18 : 0.82;
   const impulseBoost = 1 + transitionImpulse * 0.18;
 
   const remaining = MAX_TASK_POINTS - points.length;
   // Keep point density high even during blends so the logogram stays structured, not sparse.
-  const densityFloor = 0.58;
+  const densityFloor = 0.76;
   const effectiveSampleWeight = densityFloor + (1 - densityFloor) * weight;
   const minSamples = Math.min(budget, 120);
   const targetSamples = Math.min(remaining, Math.max(minSamples, Math.floor(budget * effectiveSampleWeight)));
@@ -331,7 +331,7 @@ function pushAtomPoints(
       nx: jitteredNx,
       ny: jitteredNy,
       nz: clamp01(centerZ + sp.y * 0.02),
-      radius: baseRadius * (0.24 + sp.thickness * (0.18 + sp.mass * 0.12)) * emphasis * radiusScale * (0.78 + reveal * 0.22),
+      radius: baseRadius * (0.18 + sp.thickness * (0.14 + sp.mass * 0.1)) * emphasis * radiusScale * (0.78 + reveal * 0.22),
       urgency: injectorStrength,
       importance: depositionRate * (isBlob ? 1.14 : isTendril ? 0.7 : 0.9) * (centerClamp ? 0.9 : 1),
       selected,
