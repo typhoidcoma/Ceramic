@@ -1,38 +1,23 @@
 {
-  "name": "ceramic-microgrid",
+  "name": "arrival-logograms",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
-    "dev:server": "tsx watch server/index.ts",
-    "dev:all": "concurrently -k -n server,web -c cyan,magenta \"npm run dev:server\" \"npm run dev\"",
-    "benchmark:import:wolfram": "tsx tools/reference/importScriptLogoJpegs.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^17.2.3",
-    "express": "^5.1.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "sharp": "^0.34.4",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7",
-    "zod": "^4.1.11"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "@types/node": "^25.3.3",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.1.0",
     "@webgpu/types": "^0.1.69",
-    "concurrently": "^9.2.1",
-    "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vite": "^7.1.12"
   }
