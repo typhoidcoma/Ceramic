@@ -23,7 +23,6 @@ export function createSimulationSystem(
   device: GPUDevice,
   pipelines: PipelineBundle,
   uniformBuffer: GPUBuffer,
-  taskBuffer: GPUBuffer,
   viewportWidth: number,
   viewportHeight: number,
   qualityTier: QualityTier,
@@ -48,7 +47,7 @@ export function createSimulationSystem(
       { binding: 7, resource: { buffer: resources.pressureRead } },
       { binding: 8, resource: { buffer: resources.pressureWrite } },
       { binding: 9, resource: { buffer: resources.divergence } },
-      { binding: 10, resource: { buffer: taskBuffer } },
+      { binding: 10, resource: { buffer: resources.targetDensity } },
     ],
   });
 
@@ -124,7 +123,7 @@ export function drawVolume(
       {
         view: target,
         loadOp: "clear",
-        clearValue: { r: 0.01, g: 0.01, b: 0.01, a: 1 },
+        clearValue: { r: 0.68, g: 0.69, b: 0.72, a: 1 },
         storeOp: "store",
       },
     ],

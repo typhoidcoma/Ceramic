@@ -18,7 +18,7 @@ struct Globals {
   pigmentAbsorption : f32,
   carrierScattering : f32,
   inkRetention : f32,
-  pad0 : f32,
+  sweepProgress : f32,
 }
 
 @group(0) @binding(0) var<uniform> globals : Globals;
@@ -105,62 +105,82 @@ fn samplePigmentUv(uv: vec2f, d: vec2u) -> f32 {
 fn fs_volume(in: VsOut) -> @location(0) vec4f {
   let d = dims();
   let uv = in.uv;
-  let center = vec2f(0.5, 0.53);
-  let p = uv - center;
-  let radial = length(p);
   let texel = vec2f(1.0 / f32(d.x), 1.0 / f32(d.y));
-  let c0 = sampleCarrierUv(uv, d);
+
+  // Sample pigment with neighbor blur
   let p0 = samplePigmentUv(uv, d);
-  let cx1 = sampleCarrierUv(uv + vec2f(texel.x, 0.0), d);
-  let cx2 = sampleCarrierUv(uv - vec2f(texel.x, 0.0), d);
-  let cy1 = sampleCarrierUv(uv + vec2f(0.0, texel.y), d);
-  let cy2 = sampleCarrierUv(uv - vec2f(0.0, texel.y), d);
   let px1 = samplePigmentUv(uv + vec2f(texel.x, 0.0), d);
   let px2 = samplePigmentUv(uv - vec2f(texel.x, 0.0), d);
   let py1 = samplePigmentUv(uv + vec2f(0.0, texel.y), d);
   let py2 = samplePigmentUv(uv - vec2f(0.0, texel.y), d);
-  let cNeighbor = (cx1 + cx2 + cy1 + cy2) * 0.25;
-  let pNeighbor = (px1 + px2 + py1 + py2) * 0.25;
-  let pGrad = abs(px1 - px2) + abs(py1 - py2);
-  let edgeKeep = smoothstep(0.2, 0.018, pGrad);
-  var carrier = c0 * 0.994 + cNeighbor * 0.00045;
-  var pigment = mix(p0 * 0.972 + pNeighbor * 0.009, p0 * 0.9985 + pNeighbor * 0.0015, edgeKeep);
+  let step2 = texel * 2.0;
+  let pd1 = samplePigmentUv(uv + vec2f(step2.x, step2.y), d);
+  let pd2 = samplePigmentUv(uv + vec2f(-step2.x, step2.y), d);
+  let pd3 = samplePigmentUv(uv + vec2f(step2.x, -step2.y), d);
+  let pd4 = samplePigmentUv(uv + vec2f(-step2.x, -step2.y), d);
+  let pWide = p0 * 0.3 + (px1 + px2 + py1 + py2) * 0.12 + (pd1 + pd2 + pd3 + pd4) * 0.05;
+  var pigment = clamp(pWide, 0.0, 2.5);
 
-  carrier = clamp(carrier * globals.fogDensity * 0.8, 0.0, 3.5);
-  pigment = clamp(pigment, 0.0, 4.5);
+  // === Atmospheric mist layer ===
+  // Slow-drifting cloud noise that gives the background depth and mood
+  let mistDrift = vec2f(globals.nowSec * 0.006, -globals.nowSec * 0.004);
+  let mistCoord1 = rot2((uv - vec2f(0.5, 0.48)) * vec2f(1.2, 0.9), 0.35) * 2.8 + mistDrift;
+  let mistCoord2 = rot2((uv - vec2f(0.52, 0.5)) * vec2f(0.7, 1.1), -0.22) * 1.6 + mistDrift * 0.7;
+  let mist1 = fbm2(mistCoord1, 5) * 0.5 + 0.5; // 0..1
+  let mist2 = fbm2(mistCoord2, 4) * 0.5 + 0.5;
+  let mistLayer = mist1 * 0.6 + mist2 * 0.4;
 
-  // Cinematic wispy background fog: multi-directional plume layers to avoid visible banding.
-  let drift = vec2f(globals.nowSec * 0.011, -globals.nowSec * 0.008);
-  let q0 = rot2((uv - vec2f(0.5, 0.5)) * vec2f(1.4, 1.1), 0.62) + drift;
-  let q1 = rot2((uv - vec2f(0.46, 0.55)) * vec2f(2.7, 2.0), -0.91) - drift * 0.7;
-  let q2 = rot2((uv - vec2f(0.54, 0.48)) * vec2f(4.9, 3.8), 1.17) + drift * 0.45;
-  let n0 = fbm2(q0, 4);
-  let warp = vec2f(n0 * 0.038, -n0 * 0.031);
-  let n1 = fbm2(q1 + warp, 3);
-  let n2 = fbm2(q2 - warp * 0.6, 2);
-  let plumeField = n0 * 0.53 + n1 * 0.31 + n2 * 0.16;
-  let wispy = smoothstep(-0.18, 0.42, plumeField);
-  let smokeAbsorb = wispy * (0.006 + 0.02 * smoothstep(0.6, 0.1, radial));
-  let atmosphericLift = (wispy - 0.5) * 0.044;
-  let depthLift = smoothstep(0.9, 0.22, radial) * 0.032;
+  // Radial darkening toward edges (like looking through foggy glass)
+  let centerDist = length(uv - vec2f(0.5, 0.5));
+  let radialDarken = smoothstep(0.15, 0.72, centerDist);
 
-  let absorption = carrier * globals.carrierScattering * 0.18 + pigment * globals.pigmentAbsorption * 3.35 + smokeAbsorb;
-  let transmittance = exp(-absorption);
-  let fogBase = globals.fogBaseLuma + depthLift + atmosphericLift;
-  let pigmentMask = smoothstep(0.05, 0.22, pigment);
-  let floorLift = fogBase * 0.2 * (1.0 - pigmentMask);
-  var luminance = clamp(max(floorLift, fogBase * transmittance), 0.0, 1.0);
+  // Background luminance: moody gray with cloud variation
+  // Base ~0.68 with mist bringing it between 0.58..0.78, edges darker
+  let bgBase = 0.68;
+  let bgMist = bgBase + (mistLayer - 0.5) * 0.14;
+  let bgLuma = bgMist - radialDarken * 0.18;
 
-  luminance = (luminance - globals.fogBaseLuma) * globals.contrast + globals.fogBaseLuma;
-  luminance = clamp(luminance, 0.0, 0.94);
+  // === Ink threshold ===
+  // Edge noise for organic variation
+  let edgeDrift = vec2f(globals.nowSec * 0.011, -globals.nowSec * 0.008);
+  let q0 = rot2((uv - vec2f(0.5, 0.5)) * vec2f(1.4, 1.1), 0.62) + edgeDrift;
+  let edgeNoise = fbm2(q0, 3) * 0.05;
 
+  let inkDensity = pigment;
+  let threshold = 0.18 + edgeNoise;
+  let edgeWidth = 0.16;
+  let inkMask = smoothstep(threshold - edgeWidth * 0.5, threshold + edgeWidth * 0.5, inkDensity);
+
+  // Ink luminance: near-black at full ink, background at zero
+  let inkLuma = 0.04;
+  var luminance = mix(bgLuma, inkLuma, inkMask);
+
+  // Subtle ink bleed halo: darken background slightly near ink edges
+  let haloStrength = smoothstep(0.0, 0.12, pigment) * (1.0 - inkMask) * 0.08;
+  luminance -= haloStrength;
+
+  // Film grain — subtle, biased toward transition zone
   let filmCoord = rot2(uv * vec2f(181.0, 177.0) + vec2f(globals.nowSec * 0.31, globals.nowSec * 0.27), 0.41);
   let filmGrain = fbm2(filmCoord + vec2f(0.23, 0.41), 3);
-  let grainRaw = filmGrain * globals.grainAmount * 0.6;
-  let midWeight = smoothstep(0.08, 0.42, luminance) * (1.0 - smoothstep(0.45, 0.84, luminance));
-  luminance = clamp(luminance + grainRaw * midWeight, 0.0, 0.94);
+  let grainRaw = filmGrain * 0.012;
+  let transitionWeight = smoothstep(0.05, 0.3, inkMask) * (1.0 - smoothstep(0.7, 0.95, inkMask));
+  let bgGrainWeight = (1.0 - inkMask) * 0.4; // subtle grain in background too
+  luminance += grainRaw * (transitionWeight + bgGrainWeight);
 
-  let vignette = 0.982 + 0.018 * smoothstep(1.08, 0.22, length(uv - vec2f(0.5, 0.5)));
-  let finalLuma = clamp(luminance * vignette, 0.0, 0.94);
-  return vec4f(vec3f(finalLuma), 1.0);
+  // Vignette: darken edges substantially for moody look
+  let vignette = smoothstep(0.85, 0.25, centerDist) * 0.2 + 0.8;
+  luminance *= vignette;
+  luminance = clamp(luminance, 0.02, 0.88);
+
+  // Color: warm ink on cool misty background
+  let warmInk = vec3f(0.05, 0.04, 0.03);
+  let coolMist = vec3f(0.72, 0.73, 0.76); // blue-gray mist
+  var color = mix(coolMist, warmInk, inkMask);
+
+  // Apply luminance to color
+  let colorLuma = color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722;
+  color = color * (luminance / max(0.01, colorLuma));
+  color = clamp(color, vec3f(0.02), vec3f(0.88));
+
+  return vec4f(color, 1.0);
 }

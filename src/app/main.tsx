@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { startDataSync } from "../data/sync";
 import { generateAndInsertIncomingMessage } from "../data/llm";
 import { Renderer } from "../gpu/renderer";
 import { AtomStore } from "./store";
+import type { RendererConfig } from "../gpu/buffers";
 
 const store = new AtomStore();
 type AppPhase = "syncing" | "ready";
@@ -14,6 +15,92 @@ function useStoreSnapshot() {
     () => store.getViewVersion(),
   );
   return useMemo(() => store.getSnapshot(), [version]);
+}
+
+type SliderDef = {
+  key: keyof RendererConfig;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+};
+
+const SLIDERS: { section: string; items: SliderDef[] }[] = [
+  {
+    section: "Ink",
+    items: [
+      { key: "fogDensity", label: "Density", min: 0.1, max: 2.0, step: 0.01 },
+      { key: "inkRetention", label: "Retention", min: 0.9, max: 0.999, step: 0.001 },
+      { key: "pigmentAbsorption", label: "Absorption", min: 0.5, max: 5.0, step: 0.1 },
+      { key: "carrierScattering", label: "Scatter", min: 0.0, max: 1.0, step: 0.01 },
+    ],
+  },
+  {
+    section: "Render",
+    items: [
+      { key: "fogBaseLuma", label: "Bg Luma", min: 0.3, max: 1.0, step: 0.01 },
+      { key: "contrast", label: "Contrast", min: 0.5, max: 3.0, step: 0.05 },
+      { key: "grainAmount", label: "Grain", min: 0.0, max: 0.05, step: 0.001 },
+    ],
+  },
+];
+
+function ControlPanel({ renderer }: { renderer: Renderer | null }) {
+  const [open, setOpen] = useState(true);
+  const [values, setValues] = useState<Record<string, number>>(() => {
+    const init: Record<string, number> = {};
+    for (const sec of SLIDERS) for (const s of sec.items) init[s.key] = 0;
+    return init;
+  });
+  const initialized = useRef(false);
+
+  useEffect(() => {
+    if (!renderer || initialized.current) return;
+    // Read initial values from renderer config
+    const cfg = renderer.getConfig();
+    if (!cfg) return;
+    const init: Record<string, number> = {};
+    for (const sec of SLIDERS) for (const s of sec.items) init[s.key] = (cfg as unknown as Record<string, number>)[s.key] ?? 0;
+    setValues(init);
+    initialized.current = true;
+  }, [renderer]);
+
+  const onChange = useCallback(
+    (key: string, val: number) => {
+      setValues((prev) => ({ ...prev, [key]: val }));
+      renderer?.setConfig({ [key]: val } as Partial<RendererConfig>);
+    },
+    [renderer],
+  );
+
+  return (
+    <div className={`ctrl-panel${open ? "" : " collapsed"}`}>
+      <div className="ctrl-header" onClick={() => setOpen(!open)}>
+        <span>Controls</span>
+        <span>{open ? "\u25B4" : "\u25BE"}</span>
+      </div>
+      {open &&
+        SLIDERS.map((sec) => (
+          <div key={sec.section}>
+            <div className="ctrl-section">{sec.section}</div>
+            {sec.items.map((s) => (
+              <div className="ctrl-row" key={s.key}>
+                <label>{s.label}</label>
+                <input
+                  type="range"
+                  min={s.min}
+                  max={s.max}
+                  step={s.step}
+                  value={values[s.key] ?? s.min}
+                  onChange={(e) => onChange(s.key, parseFloat(e.target.value))}
+                />
+                <span className="ctrl-val">{(values[s.key] ?? 0).toFixed(s.step < 0.01 ? 3 : 2)}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+    </div>
+  );
 }
 
 export function App() {
@@ -124,6 +211,8 @@ export function App() {
         </button>
         <button className="chip" onClick={() => rendererRef.current?.resetView()}>Reset View</button>
       </div>
+
+      <ControlPanel renderer={rendererRef.current} />
 
       <div className="diagnostics">
         <span>{phase === "syncing" ? "syncing" : "ready"}</span>

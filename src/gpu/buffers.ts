@@ -68,6 +68,7 @@ export type UniformWriteInput = {
   pigmentAbsorption: number;
   carrierScattering: number;
   inkRetention: number;
+  sweepProgress: number;
 };
 
 export function writeUniforms(device: GPUDevice, buffer: GPUBuffer, input: UniformWriteInput): void {
@@ -91,7 +92,7 @@ export function writeUniforms(device: GPUDevice, buffer: GPUBuffer, input: Unifo
   values[16] = input.pigmentAbsorption;
   values[17] = input.carrierScattering;
   values[18] = input.inkRetention;
-  values[19] = 0;
+  values[19] = input.sweepProgress;
   device.queue.writeBuffer(buffer, 0, values.buffer);
 }
 

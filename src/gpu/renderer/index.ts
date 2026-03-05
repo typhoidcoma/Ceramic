@@ -5,7 +5,7 @@ import { initWebGpu } from "../gpu";
 import { createPipelineBundle } from "../pipeline";
 import { BASE_TILE_SIZE, INK_FLUID_PROFILE, QUALITY_PRESETS, type QualityTier } from "../sim/constants";
 import { createSimulationSystem, drawVolume, runSimulationStep, type SimulationSystem } from "../sim/system";
-import { buildTaskFieldPointsSingleActive, getLastTaskFieldMatchMeta, getLastTaskFieldStats } from "../scene/taskField";
+import { buildTaskFieldPointsSingleActive, getLastTaskFieldMatchMeta, getLastTaskFieldStats, getLastLogogramRaster } from "../scene/taskField";
 import { createCamera3D, projectAtomToScreen, tickCamera, type Camera3DState } from "../scene/camera3d";
 import { LumaReadback } from "../sim/passes/lumaReadback";
 import { BenchmarkRuntime } from "../../benchmark/runtime";
@@ -30,6 +30,45 @@ function clamp01(value: number): number {
   if (value <= 0) return 0;
   if (value >= 1) return 1;
   return value;
+}
+
+function upscaleRasterToSim(raster: { width: number; height: number; ringDensity: Float32Array; blobDensity: Float32Array; tendrilDensity: Float32Array }, simW: number, simH: number): Float32Array {
+  const out = new Float32Array(simW * simH);
+  const rw = raster.width;
+  const rh = raster.height;
+  // Zoom into center of raster so logogram fills more of the viewport.
+  // The raster maps logogram coords [-1,1] to [0, width]. The ring at radius ~0.26
+  // occupies only ~26% of raster diameter. Zoom factor 0.5 maps the viewport to
+  // the central 50% of the raster, roughly doubling the logogram's apparent size.
+  const zoom = 0.5;
+  for (let y = 0; y < simH; y += 1) {
+    const fy = (y + 0.5) / simH;
+    const ry = ((fy - 0.5) * zoom + 0.5) * (rh - 1);
+    if (ry < 0 || ry >= rh - 1) continue;
+    const y0 = Math.floor(ry);
+    const y1 = Math.min(rh - 1, y0 + 1);
+    const ty = ry - y0;
+    for (let x = 0; x < simW; x += 1) {
+      const fx = (x + 0.5) / simW;
+      const rx = ((fx - 0.5) * zoom + 0.5) * (rw - 1);
+      if (rx < 0 || rx >= rw - 1) continue;
+      const x0 = Math.floor(rx);
+      const x1 = Math.min(rw - 1, x0 + 1);
+      const tx = rx - x0;
+      const i00 = y0 * rw + x0;
+      const i10 = y0 * rw + x1;
+      const i01 = y1 * rw + x0;
+      const i11 = y1 * rw + x1;
+      const sample = (i: number) => raster.ringDensity[i] + raster.blobDensity[i] * 1.4 + raster.tendrilDensity[i] * 1.8;
+      const v00 = sample(i00);
+      const v10 = sample(i10);
+      const v01 = sample(i01);
+      const v11 = sample(i11);
+      const v = (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty;
+      out[y * simW + x] = v;
+    }
+  }
+  return out;
 }
 
 function estimateLumaMetrics(points: TaskPoint[], config: RendererConfig): { inkFieldMean: number; inkFieldMax: number; brightPixelRatio: number; lumaHistogram: number[] } {
@@ -84,11 +123,20 @@ export class Renderer {
   private freezeForAtomId: string | null = null;
   private lastFrameLumaMeanActual: number | null = null;
   private bgDarkDriftRate = 0;
+  private nearBlackFrameStreak = 0;
+  private cachedDensityField: Float32Array | null = null;
+  private cachedDensityRaster: object | null = null;
+  private cachedDensitySimW = 0;
+  private cachedDensitySimH = 0;
 
   constructor(canvas: HTMLCanvasElement, store: AtomStore, initial?: Partial<RendererConfig>) {
     this.canvas = canvas;
     this.store = store;
     if (initial) this.config = { ...this.config, ...initial };
+  }
+
+  getConfig(): Readonly<RendererConfig> {
+    return this.config;
   }
 
   setConfig(partial: Partial<RendererConfig>): void {
@@ -127,7 +175,6 @@ export class Renderer {
       this.gpu.device,
       this.pipelines,
       this.uniformBuffer,
-      this.taskBuffer,
       this.canvas.width,
       this.canvas.height,
       this.activeTier,
@@ -190,6 +237,19 @@ export class Renderer {
     );
     const taskCount = writeTaskPoints(this.gpu.device, this.taskBuffer, points);
     this.store.setTaskPointCount(taskCount);
+    // Upload target density field from rasterized logogram (only when raster changes)
+    const raster = getLastLogogramRaster();
+    if (raster && this.simulation) {
+      const simW = this.simulation.resources.simWidth;
+      const simH = this.simulation.resources.simHeight;
+      if (raster !== this.cachedDensityRaster || simW !== this.cachedDensitySimW || simH !== this.cachedDensitySimH) {
+        this.cachedDensityField = upscaleRasterToSim(raster, simW, simH);
+        this.cachedDensityRaster = raster;
+        this.cachedDensitySimW = simW;
+        this.cachedDensitySimH = simH;
+        this.gpu.device.queue.writeBuffer(this.simulation.resources.targetDensity, 0, this.cachedDensityField.buffer);
+      }
+    }
     const estimatedLuma = estimateLumaMetrics(points, this.config);
     this.store.setLumaMetrics(estimatedLuma);
     const frameLumaMeanActual = estimatedLuma.inkFieldMean > 0 ? Math.max(0, Math.min(1, this.config.fogBaseLuma * Math.exp(-estimatedLuma.inkFieldMean * this.config.pigmentAbsorption * 0.8))) : this.config.fogBaseLuma;
@@ -204,6 +264,17 @@ export class Renderer {
       brightPixelRatioActual: estimatedLuma.brightPixelRatio,
       frameLumaHistogramActual: estimatedLuma.lumaHistogram,
     });
+    if (taskCount > 0 && frameLumaMeanActual < 0.06) {
+      this.nearBlackFrameStreak += 1;
+    } else {
+      this.nearBlackFrameStreak = 0;
+    }
+    if (this.nearBlackFrameStreak > 30) {
+      this.nearBlackFrameStreak = 0;
+      this.rebuildSimulation();
+      this.raf = requestAnimationFrame(this.frame);
+      return;
+    }
     const matchMeta = getLastTaskFieldMatchMeta();
     this.store.setActiveMessageMatchMeta(matchMeta.source, matchMeta.matchedPhrase, matchMeta.canonicalKey);
     const taskStats = getLastTaskFieldStats();
@@ -281,6 +352,7 @@ export class Renderer {
       pigmentAbsorption: this.config.pigmentAbsorption,
       carrierScattering: this.config.carrierScattering,
       inkRetention: this.config.inkRetention,
+      sweepProgress: taskStats.sweepProgress,
     });
 
     const encoder = this.gpu.device.createCommandEncoder();

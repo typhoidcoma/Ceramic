@@ -16,12 +16,12 @@ export const QUALITY_PRESETS: Record<QualityTier, QualityPreset> = {
     compositeSamples: 12,
   },
   balanced: {
-    simResolutionScale: 0.5,
+    simResolutionScale: 0.75,
     pressureIterations: 14,
     compositeSamples: 18,
   },
   high: {
-    simResolutionScale: 0.65,
+    simResolutionScale: 1.0,
     pressureIterations: 20,
     compositeSamples: 24,
   },
@@ -34,16 +34,16 @@ export const CLUMP_DENSITY_DEFAULT = 0.5;
 export const STAMP_JITTER_TIME_SCALE = 0.32;
 export const BENCH_TARGET_FPS = 45;
 export const BENCH_MIN_FPS_WINDOW_MS = 2000;
-export const BENCH_MAX_ACTIVE_POINTS = 1800;
-export const BENCH_MAX_PREV_POINTS = 900;
+export const BENCH_MAX_ACTIVE_POINTS = 3200;
+export const BENCH_MAX_PREV_POINTS = 1600;
 
 export const INK_FLUID_PROFILE = {
   fogDensity: 0.88,
-  contrast: 1.08,
-  grainAmount: 0.01,
-  fogBaseLuma: 0.62,
-  pigmentAbsorption: 2.7,
+  contrast: 1.0,
+  grainAmount: 0.006,
+  fogBaseLuma: 0.94,
+  pigmentAbsorption: 2.2,
   carrierScattering: 0.12,
-  inkRetention: 0.988,
+  inkRetention: 0.978,
   compositeMode: "subtractive_ink_v2",
 } as const;

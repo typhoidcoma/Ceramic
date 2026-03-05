@@ -11,6 +11,7 @@ export type SimulationResources = {
   pressureRead: GPUBuffer;
   pressureWrite: GPUBuffer;
   divergence: GPUBuffer;
+  targetDensity: GPUBuffer;
 };
 
 function createStorageBuffer(device: GPUDevice, label: string, size: number): GPUBuffer {
@@ -39,6 +40,7 @@ export function createSimulationResources(device: GPUDevice, simWidth: number, s
     pressureRead: createStorageBuffer(device, "pressure-read", scalarSize),
     pressureWrite: createStorageBuffer(device, "pressure-write", scalarSize),
     divergence: createStorageBuffer(device, "divergence", scalarSize),
+    targetDensity: createStorageBuffer(device, "target-density", scalarSize),
   };
 }
 

@@ -2,7 +2,7 @@ import { type Atom } from "../../data/types";
 import type { ActiveMessageState } from "../../app/store";
 import type { TaskPoint } from "../buffers";
 import { BENCH_MAX_ACTIVE_POINTS, BENCH_MAX_PREV_POINTS, MAX_TASK_POINTS } from "../sim/constants";
-import { generateLogogramFromMatch, sampleLogogram } from "./logograms";
+import { generateLogogramFromMatch, sampleLogogram, rasterizeLogogram, type ProceduralMaskRaster } from "./logograms";
 import type { BenchmarkMode, LogogramSolveBreakdown } from "../../data/types";
 import { matchLogogramFromMessage } from "./logogramMatcher";
 
@@ -57,6 +57,8 @@ type TaskFieldStats = {
 };
 
 let lastMatchMeta: MatchMeta = { source: "none", matchedPhrase: null, canonicalKey: null };
+let lastLogogramRaster: ProceduralMaskRaster | null = null;
+let lastLogogramRasterKey: string | null = null;
 let lastStats: TaskFieldStats = {
   channelCounts: { ring: 0, tendril: 0, hook: 0 },
   maskPointCountRing: 0,
@@ -149,8 +151,8 @@ function computeBounds(atoms: Atom[]): Bounds {
   return { minX, maxX, minY, maxY, minZ, maxZ };
 }
 
-const ACTIVE_SAMPLE_BUDGET = Math.min(2600, BENCH_MAX_ACTIVE_POINTS);
-const PREV_SAMPLE_BUDGET = Math.min(1300, BENCH_MAX_PREV_POINTS);
+const ACTIVE_SAMPLE_BUDGET = Math.min(3200, BENCH_MAX_ACTIVE_POINTS);
+const PREV_SAMPLE_BUDGET = Math.min(1600, BENCH_MAX_PREV_POINTS);
 const MAX_LOGOGRAM_CACHE = 256;
 const RING_BAND_MIN_RADIUS_NORM = 0.18;
 const RING_BAND_MAX_RADIUS_NORM = 0.38;
@@ -213,7 +215,7 @@ function pushAtomPoints(
   const centerZ = norm(atom.z, bounds.minZ, bounds.maxZ);
   const selected = atom.id === selectedId ? 1 : 0;
   const hovered = atom.id === hoveredId ? 1 : 0;
-  const baseRadius = (0.0041 + 0.0062 * (0.45 * urgency + 0.55 * importance)) * (0.6 + 0.4 * weight);
+  const baseRadius = (0.0048 + 0.0068 * (0.45 * urgency + 0.55 * importance)) * (0.6 + 0.4 * weight);
   const emphasis = selected ? 1.28 : hovered ? 1.14 : 1;
   const dictionaryBoost = match.source === "dictionary" ? 1.18 : 0.82;
   const impulseBoost = 1 + transitionImpulse * 0.18;
@@ -225,6 +227,12 @@ function pushAtomPoints(
   const minSamples = Math.min(budget, 220);
   const targetSamples = Math.min(remaining, Math.max(minSamples, Math.floor(budget * effectiveSampleWeight)));
   const descriptor = generateLogogramFromMatch(atom, match);
+  // Generate/cache density raster for target-field injection
+  const rasterKey = `${match.canonicalKey}:${match.messageHash}:${benchmarkMode}:${freezeToken ?? "live"}`;
+  if (useAsPrimaryMeta && rasterKey !== lastLogogramRasterKey) {
+    lastLogogramRaster = rasterizeLogogram(descriptor, 4096);
+    lastLogogramRasterKey = rasterKey;
+  }
   const symbolPoints = getCachedSymbolPoints(
     `${match.canonicalKey}:${match.messageHash}:${benchmarkMode}:${freezeToken ?? "live"}`,
     descriptor,
@@ -256,7 +264,7 @@ function pushAtomPoints(
       const a = t * Math.PI * 2;
       const radial = ringBandMinRadiusNorm + (ringBandMaxRadiusNorm - ringBandMinRadiusNorm) * t;
       const ox = Math.cos(a) * radial;
-      const oy = Math.sin(a) * radial * 0.96;
+      const oy = Math.sin(a) * radial;
       const px = centerX + ox;
       const py = centerY + oy;
       points.push({
@@ -285,30 +293,43 @@ function pushAtomPoints(
       continue;
     }
     if (!useAsPrimaryMeta && sp.channel !== "ring") continue;
-    const prev = symbolPoints[Math.max(0, s - 1)];
-    const next = symbolPoints[Math.min(symbolPoints.length - 1, s + 1)];
-    const tx = next.x - prev.x;
-    const ty = next.y - prev.y;
-    const tLen = Math.hypot(tx, ty) || 1;
     const isRing = sp.channel === "ring";
     const isBlob = sp.channel === "blob";
     const isTendril = sp.channel === "tendril";
-    const perceivedSweep = clamp01(sweepProgress + (1 - sweepProgress) * 0.32);
-    const phaseLead = isRing ? 0.17 : isBlob ? 0.22 : 0.02;
-    const reveal = clamp01((perceivedSweep - (sp.phase - phaseLead) + 0.26) / 0.26);
+    const prev = symbolPoints[Math.max(0, s - 1)];
+    const next = symbolPoints[Math.min(symbolPoints.length - 1, s + 1)];
+    let tx = next.x - prev.x;
+    let ty = next.y - prev.y;
+    if (prev.channel !== sp.channel || next.channel !== sp.channel) {
+      if (isRing) {
+        tx = -sp.y;
+        ty = sp.x;
+      } else if (isTendril) {
+        tx = (sp.jitterU ?? 0) * 0.4;
+        ty = 1 + (sp.jitterV ?? 0) * 0.2;
+      } else {
+        tx = next.x - sp.x;
+        ty = next.y - sp.y;
+      }
+    }
+    const tLen = Math.hypot(tx, ty) || 1;
+    const perceivedSweep = clamp01(sweepProgress + (1 - sweepProgress) * 0.48);
+    const phaseLead = isRing ? 0.24 : isBlob ? 0.28 : 0.08;
+    const reveal = clamp01((perceivedSweep - (sp.phase - phaseLead) + 0.38) / 0.38);
     if (reveal <= 0) continue;
-    const injectorStrength = injectorStrengthBase * (0.82 + 0.18 * reveal);
-    const depositionRate = depositionRateBase * (0.74 + 0.26 * reveal);
-    const channelScale = isRing ? 1.22 : isBlob ? 0.88 : 0.72;
+    const revealEased = reveal * reveal * (3 - 2 * reveal);
+    const injectorStrength = injectorStrengthBase * (0.72 + 0.28 * revealEased);
+    const depositionRate = depositionRateBase * (0.62 + 0.38 * revealEased);
+    const channelScale = isRing ? 1.38 : isBlob ? 0.62 : 0.58;
     const anisotropy = isRing
-      ? clamp01(0.48 + 0.26 * sp.mass)
+      ? clamp01(0.52 + 0.14 * sp.mass)
       : isBlob
         ? clamp01(0.04 + 0.06 * sp.mass)
-        : clamp01(0.22 + 0.18 * sp.mass);
+        : clamp01(0.48 + 0.18 * sp.mass);
     const pigmentBias = clamp01((0.34 + 0.66 * (sp.thickness / 1.3)) * dictionaryBoost * impulseBoost * channelScale);
-    const radiusScale = isRing ? 0.68 : isBlob ? 0.72 : 0.44;
+    const radiusScale = isRing ? 0.94 : isBlob ? 0.52 : 0.38;
     const ox = sp.x * glyphScale;
-    const oy = sp.y * glyphScale * 0.96;
+    const oy = sp.y * glyphScale;
     const radial = Math.hypot(ox, oy);
     if (isRing && (radial < ringBandMinRadiusNorm || radial > ringBandMaxRadiusNorm)) continue;
     if (radial > ringBandMaxRadiusNorm * 1.24) continue;
@@ -324,9 +345,9 @@ function pushAtomPoints(
     const tangentY = ty / tLen;
     const normalX = -tangentY;
     const normalY = tangentX;
-    const dirWarp = 0;
-    const flowX = tangentX + normalX * dirWarp;
-    const flowY = tangentY + normalY * dirWarp;
+    const flowBoost = reveal < 0.92 ? (1 - revealEased) * 1.8 : 0;
+    const flowX = tangentX * (1 + flowBoost) + normalX * flowBoost * 0.15;
+    const flowY = tangentY * (1 + flowBoost) + normalY * flowBoost * 0.15;
     const flowLen = Math.hypot(flowX, flowY) || 1;
     const dirX = flowX / flowLen;
     const dirY = flowY / flowLen;
@@ -353,18 +374,18 @@ function pushAtomPoints(
       nx: jitteredNx,
       ny: jitteredNy,
       nz: clamp01(centerZ + sp.y * 0.02),
-      radius: baseRadius * (0.24 + sp.thickness * (0.2 + sp.mass * 0.12)) * emphasis * radiusScale * (0.78 + reveal * 0.22),
+      radius: baseRadius * (0.26 + sp.thickness * (0.22 + sp.mass * 0.13)) * emphasis * radiusScale * (0.75 + revealEased * 0.25),
       urgency: injectorStrength,
-      importance: depositionRate * (isBlob ? 0.82 : isTendril ? 0.58 : 1.12) * (centerClamp ? 0.9 : 1),
+      importance: depositionRate * (isBlob ? 0.88 : isTendril ? 0.64 : 1.22) * (centerClamp ? 0.9 : 1),
       selected,
       hovered,
       dirX,
       dirY,
-      coherence: isRing ? clamp01(0.58 + 0.24 * sp.mass) : clamp01(anisotropy * (0.5 + 0.2 * sp.mass)),
+      coherence: isRing ? clamp01(0.62 + 0.18 * sp.mass) : clamp01(anisotropy * (0.62 + 0.22 * sp.mass)),
       ink:
         pigmentBias *
-        (isBlob ? 0.68 + sp.mass * 0.32 : isTendril ? 0.3 + sp.mass * 0.14 : 0.68 + sp.mass * 0.34) *
-        (0.84 + 0.16 * reveal) *
+        (isBlob ? 0.48 + sp.mass * 0.22 : isTendril ? 0.3 + sp.mass * 0.14 : 0.88 + sp.mass * 0.38) *
+        (0.7 + 0.3 * revealEased) *
         (1 - centerPenalty * 0.5),
     };
     if (
@@ -580,6 +601,7 @@ export function buildTaskFieldPointsSingleActive(
       const prev = lastStats.ringSectorOccupancy[(i + 11) % 12] > 1 ? 1 : 0;
       if (cur === 1 && prev === 0) runs += 1;
     }
+    if (runs === 0 && occupiedSectors > 0) runs = 1;
     lastStats.ringContinuityRuns = runs;
     const blobTotal = frameBlobSectorCounts.reduce((acc, v) => acc + v, 0);
     const blobMax = frameBlobSectorCounts.reduce((acc, v) => Math.max(acc, v), 0);
@@ -603,4 +625,8 @@ export function getLastTaskFieldMatchMeta(): MatchMeta {
 
 export function getLastTaskFieldStats(): TaskFieldStats {
   return lastStats;
+}
+
+export function getLastLogogramRaster(): ProceduralMaskRaster | null {
+  return lastLogogramRaster;
 }
