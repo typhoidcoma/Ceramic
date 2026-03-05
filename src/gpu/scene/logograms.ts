@@ -15,6 +15,7 @@ export type TextureFieldParams = {
 };
 
 export type LogogramGrammar = {
+  canonicalKey: string;
   ringContinuity: number;
   sectorRoles: SectorRole[];
   primaryBranches: Array<{ sector: number; length: number; curvature: number; direction: -1 | 1 }>;
@@ -41,6 +42,14 @@ export type LogogramGrammar = {
   shapeSignature: number[];
   signatureDistanceToCanonical: number;
   textureField: TextureFieldParams;
+  procedural: {
+    massBias: number;
+    clumpCountBias: number;
+    clumpSpanBias: number;
+    tendrilCountBias: number;
+    tendrilLengthBias: number;
+    arcDropoutBias: number;
+  };
 };
 
 export type LogogramDescriptor = {
@@ -54,10 +63,28 @@ export type LogogramPoint = {
   y: number;
   thickness: number;
   phase: number;
-  channel: "ring" | "tendril" | "hook";
+  channel: "ring" | "blob" | "tendril";
   jitterU: number;
   jitterV: number;
   mass: number;
+};
+
+export type ProceduralMaskSpec = {
+  ringArcs: Array<{ theta0: number; theta1: number; radius: number; thickness: number; centerJitter: number; sector: number; strength: number }>;
+  microStrokeCount: number;
+  blobClusters: Array<{ theta: number; arcSpan: number; radialBias: number; diskCount: number; diskRadiusMin: number; diskRadiusMax: number }>;
+  tendrilSpecs: Array<{ theta: number; count: number; lengthMin: number; lengthMax: number; curlMin: number; curlMax: number; noiseExp: number }>;
+  seed: number;
+};
+
+type MaskSamplePoint = {
+  x: number;
+  y: number;
+  mass: number;
+  width: number;
+  channel: "ring" | "blob" | "tendril";
+  phase: number;
+  flowBias: number;
 };
 
 export type SampleLogogramOptions = {
@@ -235,8 +262,15 @@ function buildDescriptor(atom: Atom, match: MatchedLogogram): LogogramDescriptor
   const inkMassBias = clamp01(0.45 + atom.importance * 0.16 + (1 - discrete.solveMetrics.voidPenalty) * 0.14);
   const styleFray = typeof match.style.fray_bias === "number" ? clamp01(match.style.fray_bias) : FRAY_DENSITY_DEFAULT;
   const styleClump = typeof match.style.tendril_bias === "number" ? clamp01(match.style.tendril_bias) : CLUMP_DENSITY_DEFAULT;
+  const massBias = typeof match.style.mass_bias === "number" ? clamp01(match.style.mass_bias) : 0.58;
+  const clumpCountBias = typeof match.style.clump_count_bias === "number" ? clamp01(match.style.clump_count_bias) : 0.5;
+  const clumpSpanBias = typeof match.style.clump_span_bias === "number" ? clamp01(match.style.clump_span_bias) : 0.56;
+  const tendrilCountBias = typeof match.style.tendril_count_bias === "number" ? clamp01(match.style.tendril_count_bias) : 0.52;
+  const tendrilLengthBias = typeof match.style.tendril_length_bias === "number" ? clamp01(match.style.tendril_length_bias) : 0.54;
+  const arcDropoutBias = typeof match.style.arc_dropout_bias === "number" ? clamp01(match.style.arc_dropout_bias) : 0.48;
   return {
     grammar: {
+      canonicalKey: match.canonicalKey,
       ringContinuity,
       sectorRoles: roles,
       primaryBranches: branches,
@@ -271,6 +305,14 @@ function buildDescriptor(atom: Atom, match: MatchedLogogram): LogogramDescriptor
         frayDensity: clamp01(0.32 + styleFray * 0.6),
         clumpDensity: clamp01(0.28 + styleClump * 0.64),
       },
+      procedural: {
+        massBias,
+        clumpCountBias,
+        clumpSpanBias,
+        tendrilCountBias,
+        tendrilLengthBias,
+        arcDropoutBias,
+      },
     },
     baseRadius: 1,
     complexity,
@@ -296,238 +338,311 @@ function ringPresenceAtSector(grammar: LogogramGrammar, sector: number): number 
   if (grammar.sectorGapMask[sector % 12] === 1) return 0;
   const role = grammar.sectorRoles[sector % 12];
   const base = grammar.sectorActivation[sector % 12] ?? 0.7;
-  if (role === "trunk") return clamp01(base * 1.05);
-  if (role === "modifier") return clamp01(base * 0.9);
-  if (role === "tendril" || role === "hook") return clamp01(base * 0.78);
+  if (role === "trunk") return clamp01(base * 1.06);
+  if (role === "modifier") return clamp01(base * 0.93);
+  if (role === "tendril" || role === "hook") return clamp01(base * 0.8);
   return base;
 }
 
-function pushRingPoint(
-  points: LogogramPoint[],
-  x: number,
-  y: number,
-  thickness: number,
-  phase: number,
-  channel: "ring" | "tendril" | "hook",
-  jitterU: number,
-  jitterV: number,
-  mass: number,
-): void {
-  points.push({ x, y, thickness: clamp01(thickness), phase: clamp01(phase), channel, jitterU, jitterV, mass: clamp01(mass) });
+function pushPoint(points: LogogramPoint[], point: MaskSamplePoint, jitterU: number, jitterV: number): void {
+  points.push({
+    x: point.x,
+    y: point.y,
+    thickness: clamp01(point.width),
+    phase: clamp01(point.phase),
+    channel: point.channel,
+    jitterU,
+    jitterV,
+    mass: clamp01(point.mass),
+  });
+}
+
+function pickHeavySectors(grammar: LogogramGrammar): number[] {
+  const scored: Array<{ sector: number; score: number }> = [];
+  for (let i = 0; i < 12; i += 1) {
+    if (grammar.sectorGapMask[i] === 1) continue;
+    const score = ringPresenceAtSector(grammar, i) * (0.75 + 0.25 * (grammar.sectorThickness[i] ?? 0.5));
+    scored.push({ sector: i, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  const targetCount = Math.max(1, Math.min(4, Math.round(1 + grammar.procedural.clumpCountBias * 3)));
+  return scored.slice(0, Math.max(1, Math.min(targetCount, scored.length))).map((v) => v.sector);
+}
+
+function buildProceduralMaskSpec(logogram: LogogramDescriptor, sampleBudget: number, options: SampleLogogramOptions): ProceduralMaskSpec {
+  const grammar = logogram.grammar;
+  const seedBase = (grammar.sweepSeed ^ 0x6f4f2b91 ^ ((options.freezeToken ?? 0) >>> 0)) >>> 0;
+  const rnd = seeded(seedBase);
+  const ringArcs: ProceduralMaskSpec["ringArcs"] = [];
+  let heavySectors = pickHeavySectors(grammar);
+  if (heavySectors.length > 1) {
+    const preferredSpan = 2 + Math.round(grammar.procedural.clumpSpanBias * 2);
+    heavySectors = heavySectors.sort((a, b) => a - b);
+    const anchor = heavySectors[0];
+    heavySectors = heavySectors.filter((s, idx) => idx === 0 || Math.abs(s - anchor) >= preferredSpan);
+  }
+  const ringBase = grammar.ringRadiusNorm;
+  const ringBand = Math.max(0.014, grammar.ringBandWidthNorm);
+
+  for (let sector = 0; sector < 12; sector += 1) {
+    if (grammar.sectorGapMask[sector] === 1) continue;
+    const presence = Math.max(0.12, ringPresenceAtSector(grammar, sector));
+    const theta0 = angleForSector(sector) + (rnd() - 0.5) * 0.04;
+    const theta1 = angleForSector(sector + 1) + (rnd() - 0.5) * 0.04;
+    const sectorNoise = fbm2(seedBase ^ 0x7f4a7c15, sector * 0.73, 1.27, 2, 1.9, 0.57);
+    const sectorStrength = clamp01(0.18 + 0.52 * presence + sectorNoise * 0.28);
+    ringArcs.push({
+      theta0,
+      theta1,
+      radius: ringBase + (rnd() - 0.5) * ringBand * 0.35,
+      thickness: clamp01((grammar.sectorThickness[sector] ?? 0.5) * (0.54 + 0.52 * presence)),
+      centerJitter: ringBand * (0.08 + 0.12 * rnd()),
+      sector,
+      strength: sectorStrength,
+    });
+  }
+
+  const blobClusters: ProceduralMaskSpec["blobClusters"] = heavySectors.map((sector) => ({
+    theta: angleForSector(sector) + (Math.PI / 12) * (0.25 + rnd() * 0.5),
+    arcSpan: 0.12 + grammar.procedural.clumpSpanBias * 0.24 + rnd() * 0.16,
+    radialBias: -0.12 + rnd() * 0.34,
+    diskCount: 12 + Math.floor(grammar.procedural.clumpCountBias * 18) + Math.floor(rnd() * 10),
+    diskRadiusMin: 0.006 + rnd() * 0.005,
+    diskRadiusMax: 0.016 + grammar.procedural.massBias * 0.03 + rnd() * 0.018,
+  }));
+
+  const tendrilSpecs: ProceduralMaskSpec["tendrilSpecs"] = heavySectors.map((sector) => ({
+    theta: angleForSector(sector) + (Math.PI / 12) * (0.2 + rnd() * 0.6),
+    count: 2 + Math.floor(grammar.procedural.tendrilCountBias * 5) + Math.floor(rnd() * 2),
+    lengthMin: 6 + Math.floor(grammar.procedural.tendrilLengthBias * 10) + Math.floor(rnd() * 4),
+    lengthMax: 13 + Math.floor(grammar.procedural.tendrilLengthBias * 15) + Math.floor(rnd() * 8),
+    curlMin: 0.03 + rnd() * 0.05,
+    curlMax: 0.08 + rnd() * 0.13,
+    noiseExp: 1.0 + rnd() * 1.0,
+  }));
+
+  return {
+    ringArcs,
+    microStrokeCount: Math.max(180, Math.floor(sampleBudget * (0.88 - grammar.procedural.massBias * 0.16))),
+    blobClusters,
+    tendrilSpecs,
+    seed: seedBase,
+  };
 }
 
 function blueNoiseCompact(points: LogogramPoint[], budget: number): LogogramPoint[] {
   if (points.length <= budget) return points;
   const target = Math.max(1, budget);
-  const side = Math.max(12, Math.floor(Math.sqrt(target) * 1.35));
-  const cells = new Map<number, LogogramPoint>();
   const score = (p: LogogramPoint) => p.mass * 0.7 + p.thickness * 0.3;
-  for (let i = 0; i < points.length; i += 1) {
-    const p = points[i];
-    const cx = Math.max(0, Math.min(side - 1, Math.floor((p.x * 0.5 + 0.5) * side)));
-    const cy = Math.max(0, Math.min(side - 1, Math.floor((p.y * 0.5 + 0.5) * side)));
-    const key = cy * side + cx;
-    const prev = cells.get(key);
-    if (!prev || score(p) > score(prev)) cells.set(key, p);
-  }
-  const compact = [...cells.values()];
-  if (compact.length <= target) {
-    const stride = points.length / target;
-    for (let i = compact.length; i < target; i += 1) compact.push(points[Math.floor(i * stride)]);
+  const compactChannel = (input: LogogramPoint[], targetCount: number): LogogramPoint[] => {
+    if (input.length <= targetCount) return [...input];
+    const side = Math.max(8, Math.floor(Math.sqrt(Math.max(1, targetCount)) * 1.25));
+    const cells = new Map<number, LogogramPoint>();
+    for (let i = 0; i < input.length; i += 1) {
+      const p = input[i];
+      const cx = Math.max(0, Math.min(side - 1, Math.floor((p.x * 0.5 + 0.5) * side)));
+      const cy = Math.max(0, Math.min(side - 1, Math.floor((p.y * 0.5 + 0.5) * side)));
+      const key = cy * side + cx;
+      const prev = cells.get(key);
+      if (!prev || score(p) > score(prev)) cells.set(key, p);
+    }
+    const compact = [...cells.values()];
+    if (compact.length >= targetCount) {
+      compact.sort((a, b) => score(b) - score(a));
+      return compact.slice(0, targetCount);
+    }
+    const baseLen = compact.length;
+    const fillCount = targetCount - baseLen;
+    const used = new Set<number>();
+    for (let i = 0; i < compact.length; i += 1) {
+      const idx = input.indexOf(compact[i]);
+      if (idx >= 0) used.add(idx);
+    }
+    for (let i = 0; i < fillCount; i += 1) {
+      // Golden-ratio walk with deterministic jitter prevents regular stride cadence.
+      const g = 0.61803398875;
+      const base = (i + 1) * g + (i * 0.113);
+      const frac = base - Math.floor(base);
+      let idx = Math.floor(frac * input.length);
+      if (used.has(idx)) {
+        idx = (idx + Math.floor(input.length * 0.37) + i) % input.length;
+      }
+      used.add(idx);
+      compact.push(input[idx]);
+    }
     return compact;
-  }
-  compact.sort((a, b) => score(b) - score(a));
-  return compact.slice(0, target);
+  };
+
+  const ring = points.filter((p) => p.channel === "ring");
+  const blob = points.filter((p) => p.channel === "blob");
+  const tendril = points.filter((p) => p.channel === "tendril");
+
+  const blobTarget = blob.length > 0 ? Math.max(24, Math.floor(target * 0.16)) : 0;
+  const tendrilTarget = tendril.length > 0 ? Math.max(24, Math.floor(target * 0.16)) : 0;
+  const ringTarget = Math.max(1, target - blobTarget - tendrilTarget);
+
+  const picked = [
+    ...compactChannel(ring, ringTarget),
+    ...compactChannel(blob, blobTarget),
+    ...compactChannel(tendril, tendrilTarget),
+  ];
+  if (picked.length <= target) return picked;
+  picked.sort((a, b) => score(b) - score(a));
+  return picked.slice(0, target);
 }
 
 export function sampleLogogram(logogram: LogogramDescriptor, sampleBudget: number, options: SampleLogogramOptions = {}): LogogramPoint[] {
   const points: LogogramPoint[] = [];
   if (sampleBudget <= 0) return points;
   const grammar = logogram.grammar;
-  const ringBudget = Math.max(20, Math.floor(sampleBudget * 0.62));
-  const tendrilBudget = Math.max(10, Math.floor(sampleBudget * 0.26));
-  const hookBudget = Math.max(3, sampleBudget - ringBudget - tendrilBudget);
-  const baseR = grammar.ringRadiusNorm;
-  const ringHalfWidth = Math.max(0.0165, grammar.ringBandWidthNorm);
-  const occupied = Math.max(1, grammar.occupiedSectorCount);
-  const sweepOffset = (grammar.sweepSeed % 1024) / 1024;
-  const seedBase = (grammar.sweepSeed ^ 0x7a4c2db1 ^ ((options.freezeToken ?? 0) >>> 0)) >>> 0;
-  const rnd = seeded(seedBase);
+  const ringHalfWidth = Math.max(0.014, grammar.ringBandWidthNorm);
+  const spec = buildProceduralMaskSpec(logogram, sampleBudget, options);
+  const rnd = seeded(spec.seed);
+  const ringBandMin = grammar.ringRadiusNorm - ringHalfWidth * 1.25;
+  const ringBandMax = grammar.ringRadiusNorm + ringHalfWidth * 1.35;
 
-  const lobeA = rnd() * Math.PI * 2;
-  const lobeB = wrapAngle(lobeA + (0.85 + rnd() * 0.75));
-  const cutA = wrapAngle(lobeA + Math.PI - 0.15 + (rnd() - 0.5) * 0.35);
-  const cutB = wrapAngle(cutA + 0.8 + rnd() * 0.45);
+  const ringArcCount = Math.max(1, spec.ringArcs.length);
+  const ringStrokesPerArcBase = Math.max(16, Math.floor(spec.microStrokeCount / ringArcCount));
+  for (const arc of spec.ringArcs) {
+    const sectorFocus =
+      0.55 +
+      0.45 *
+        clamp01(
+          0.5 +
+            0.5 *
+              fbm2(
+                spec.seed ^ 0xa24baed3,
+                Math.cos((arc.theta0 + arc.theta1) * 0.5) * 2.1,
+                Math.sin((arc.theta0 + arc.theta1) * 0.5) * 2.1,
+                3,
+                2.0,
+                0.55,
+              ),
+        );
+      const clumpBoost = spec.blobClusters.some((c) => Math.abs(wrapAngle(c.theta - (arc.theta0 + arc.theta1) * 0.5)) < c.arcSpan * 0.8) ? 1.45 : 0.78;
+      const ringStrokesPerArc = Math.max(
+        4,
+        Math.floor(ringStrokesPerArcBase * (0.24 + arc.thickness * 0.42) * sectorFocus * (0.62 + arc.strength * 0.5) * clumpBoost),
+      );
+    for (let i = 0; i < ringStrokesPerArc; i += 1) {
+      let u = clamp01((i + rnd()) / ringStrokesPerArc);
+      let warp = fbm2(spec.seed ^ 0x9e3779b9, u * 6.7 + arc.sector * 0.31, arc.strength * 3.2, 2, 1.95, 0.58);
+      u = clamp01(u + warp * 0.085);
+      const dropoutNoise = fbm2(spec.seed ^ 0x45d9f3b, u * 9.0, (arc.theta0 + arc.theta1) * 0.7, 2, 1.9, 0.58);
+      const edgeGapBias = (i < 2 || i > ringStrokesPerArc - 3) ? 0.2 : 0;
+      const dropout =
+        0.28 +
+        (1 - arc.thickness) * 0.33 +
+        (1 - arc.strength) * 0.22 +
+        grammar.procedural.arcDropoutBias * 0.24 +
+        edgeGapBias;
+      if (dropoutNoise < -0.12 && rnd() < dropout) continue;
+      const theta = arc.theta0 + (arc.theta1 - arc.theta0) * u;
+      const radialNoise = fbm2(spec.seed ^ 0x7f4a7c15, theta * 1.7, u * 6.2, 3, 2.0, 0.52);
+      const tangentNoise = fbm2(spec.seed ^ 0x5bd1e995, theta * 2.1, u * 4.5, 3, 1.95, 0.56);
+      const jitterR = radialNoise * arc.centerJitter;
+      const jitterT = tangentNoise * arc.centerJitter * 0.45;
+      const r = Math.max(ringBandMin, Math.min(ringBandMax, arc.radius + jitterR));
+      const a = theta + jitterT / Math.max(1e-3, r);
+      const clumpBias = smoothstep(0.54, 0.98, arc.strength);
+      const width = clamp01(arc.thickness * (0.2 + rnd() * (0.16 + clumpBias * 0.18)));
+      const mass = clamp01(0.18 + width * (0.26 + clumpBias * 0.18) + rnd() * 0.08);
+      const phase = clamp01((u * 0.42) + ((a + Math.PI) / (2 * Math.PI)) * 0.12);
+      const p: MaskSamplePoint = {
+        x: Math.cos(a) * r,
+        y: Math.sin(a) * r,
+        mass,
+        width,
+        channel: "ring",
+        phase,
+        flowBias: 0.25 + 0.35 * width,
+      };
+      pushPoint(points, p, jitterT, jitterR);
 
-  const tex = grammar.textureField;
-  const ringScale = 7.5 + logogram.complexity * 3.2;
-  const radialAmp = 0.0035 + 0.0018 * grammar.frayLevel;
-  const tangentialAmp = 0.0026 + 0.0014 * grammar.frayLevel;
+      // Add tiny companion dabs to mimic circular brush accumulation.
+      if (rnd() < 0.06 + arc.thickness * 0.08) {
+        const companionA = a + (rnd() - 0.5) * 0.032;
+        const companionR = r + (rnd() - 0.5) * ringHalfWidth * 0.26;
+        pushPoint(
+          points,
+          {
+            x: Math.cos(companionA) * companionR,
+            y: Math.sin(companionA) * companionR,
+            mass: clamp01(mass * (0.64 + rnd() * 0.26)),
+            width: clamp01(width * (0.68 + rnd() * 0.2)),
+            channel: "ring",
+            phase: clamp01(phase + rnd() * 0.02),
+            flowBias: p.flowBias,
+          },
+          jitterT * 0.6,
+          jitterR * 0.6,
+        );
+      }
+    }
+  }
 
-  for (let sector = 0; sector < 12; sector += 1) {
-    if (grammar.sectorGapMask[sector] === 1) continue;
-    const presence = ringPresenceAtSector(grammar, sector);
-    const start = angleForSector(sector);
-    const end = angleForSector(sector + 1);
-    const sectorThickness = grammar.sectorThickness[sector] ?? 0.55;
-    const midA = (start + end) * 0.5;
-    const lobeWeight =
-      0.34 +
-      0.72 * angularGaussian(midA, lobeA, 0.54) +
-      0.48 * angularGaussian(midA, lobeB, 0.68) -
-      0.78 * angularGaussian(midA, cutA, 0.4) -
-      0.52 * angularGaussian(midA, cutB, 0.3);
-    const sectorMass = clamp01(presence * clamp01(lobeWeight));
-    if (sectorMass < 0.12) continue;
-
-    const lambda = Math.max(2.5, (ringBudget / occupied) * (0.42 + sectorMass * 0.95));
-    const ringSteps = Math.max(3, poissonCount(rnd, lambda));
-    for (let i = 0; i < ringSteps; i += 1) {
+  for (const cluster of spec.blobClusters) {
+    for (let i = 0; i < cluster.diskCount; i += 1) {
       const u = rnd();
-      const a0 = start + (end - start) * u;
-      const nR = fbm2(tex.textureSeed, sector * 0.83 + u * ringScale + tex.noisePhase, 0.71 + u * 0.95, tex.octaves, tex.lacunarity, tex.gain);
-      const nT = fbm2(tex.textureSeed ^ 0x9e3779b9, sector * 1.13 + u * (ringScale * 0.8), 1.9 + u * 1.1 + tex.noisePhase, tex.octaves, tex.lacunarity, tex.gain);
-
-      const jitterU = nT * tangentialAmp;
-      const jitterV = nR * radialAmp;
-      const a = a0 + jitterU;
-      const radius = deformRadius(a, baseR + jitterV, baseR - ringHalfWidth * 1.2, baseR + ringHalfWidth * 1.5, tex);
-      const x = Math.cos(a) * radius;
-      const y = Math.sin(a) * radius;
-
-      const thicknessNoise = clamp01(0.5 + 0.5 * fbm2(tex.textureSeed ^ 0x85ebca6b, sector + u * 5.4, tex.noisePhase * 0.3 + u * 3.1, 3, 2, 0.5));
-      const thickness = clamp01(sectorThickness * (0.5 + 0.36 * sectorMass) * (0.8 + 0.35 * thicknessNoise));
-      const phase = ((sector / 12) * 0.45 + u * 0.06 + sweepOffset) % 1;
-      const mass = clamp01(0.35 + 0.65 * sectorMass * (0.65 + 0.35 * thicknessNoise));
-
-      const keepP = clamp01(0.28 + sectorMass * 0.56);
-      if (rnd() > keepP) continue;
-
-      pushRingPoint(points, x, y, thickness, phase, "ring", jitterU, jitterV, mass);
-
-      const frayP = clamp01(tex.frayDensity * sectorMass * (0.22 + 0.5 * thicknessNoise));
-      if (rnd() < frayP) {
-        const nx = Math.cos(a);
-        const ny = Math.sin(a);
-        const frayLen = ringHalfWidth * (0.35 + grammar.frayLevel * 0.8 + sectorMass * 0.2) * (0.45 + 0.55 * u);
-        pushRingPoint(
+      const theta = cluster.theta + (u - 0.5) * cluster.arcSpan;
+      const localBand = ringHalfWidth * (0.85 + rnd() * 0.75);
+      const radius = Math.max(ringBandMin, Math.min(ringBandMax, grammar.ringRadiusNorm + cluster.radialBias * localBand + (rnd() - 0.5) * localBand * 0.8));
+      const diskR = cluster.diskRadiusMin + (cluster.diskRadiusMax - cluster.diskRadiusMin) * rnd();
+      const dabCount = 4 + Math.floor(rnd() * 5);
+      for (let d = 0; d < dabCount; d += 1) {
+        const phi = rnd() * Math.PI * 2;
+        const rr = diskR * Math.sqrt(rnd());
+        const x = Math.cos(theta) * radius + Math.cos(phi) * rr;
+        const y = Math.sin(theta) * radius + Math.sin(phi) * rr;
+        pushPoint(
           points,
-          x + nx * frayLen,
-          y + ny * frayLen,
-          thickness * (0.26 + 0.22 * sectorMass),
-          0.28 + phase * 0.44,
-          "tendril",
-          jitterU * 1.2,
-          jitterV * 1.4,
-          mass * 0.62,
-        );
-      }
-    }
-
-    if (sectorMass > 0.52) {
-      const clumpCount = Math.max(1, poissonCount(rnd, 0.85 + sectorMass * (1.8 + tex.clumpDensity * 2.5)));
-      for (let c = 0; c < clumpCount; c += 1) {
-        const u = rnd();
-        const a = start + (end - start) * u + (rnd() - 0.5) * 0.09;
-        const spread = ringHalfWidth * (0.55 + rnd() * 0.85);
-        const rBase = baseR + (rnd() - 0.32) * ringHalfWidth * (0.8 + sectorMass * 0.52);
-        const r = deformRadius(a, rBase, baseR - ringHalfWidth * 1.25, baseR + ringHalfWidth * 1.6, tex);
-        const nx = Math.cos(a);
-        const ny = Math.sin(a);
-        const phase = clamp01(0.16 + (sector / 12) * 0.46 + rnd() * 0.08);
-        const mass = clamp01(0.62 + 0.38 * sectorMass);
-        pushRingPoint(
-          points,
-          Math.cos(a) * r + nx * spread,
-          Math.sin(a) * r + ny * spread,
-          (0.32 + sectorMass * 0.34) * (0.74 + rnd() * 0.36),
-          phase,
-          "tendril",
-          (rnd() - 0.5) * tangentialAmp * 2,
-          (rnd() - 0.5) * radialAmp * 2,
-          mass,
+          {
+            x,
+            y,
+            mass: clamp01(0.74 + rnd() * 0.24),
+            width: clamp01(0.74 + rnd() * 0.2),
+            channel: "blob",
+            phase: clamp01(0.1 + rnd() * 0.36),
+            flowBias: 0.1 + rnd() * 0.12,
+          },
+          (rnd() - 0.5) * 0.006,
+          (rnd() - 0.5) * 0.006,
         );
       }
     }
   }
 
-  const tendrilAnchors = grammar.modifierAnchors.filter((v) => v.kind === "tendril");
-  const branchCount = Math.max(1, tendrilAnchors.length || grammar.primaryBranches.length || 1);
-  const stepsPerBranch = Math.max(3, Math.floor(tendrilBudget / branchCount));
-  const branches = tendrilAnchors.length
-    ? tendrilAnchors.map((v, i) => ({
-        sector: v.sector,
-        length: 0.32 + v.weight * 0.62,
-        curvature: 0.3 + rnd() * 0.5,
-        direction: ((grammar.sweepSeed + i) & 1) === 0 ? (1 as const) : (-1 as const),
-      }))
-    : grammar.primaryBranches;
-
-  for (const branch of branches) {
-    const baseA = angleForSector(branch.sector);
-    for (let i = 0; i < stepsPerBranch; i += 1) {
-      const u = i / Math.max(1, stepsPerBranch - 1);
-      const bend = branch.direction * (branch.curvature - 0.5) * (0.42 + grammar.frayLevel * 0.38);
-      const a = baseA + bend * u;
-      const r = deformRadius(
-        a,
-        baseR + ringHalfWidth * 0.78 + branch.length * u * 0.14,
-        baseR - ringHalfWidth * 1.4,
-        baseR + ringHalfWidth * 2.4,
-        tex,
-      );
-      const j = fbm2(tex.textureSeed ^ 0xc2b2ae35, branch.sector + u * 3.5, tex.noisePhase + u * 2.7, 3, 2, 0.5);
-      const mass = clamp01(0.4 + 0.4 * (1 - u));
-      pushRingPoint(
-        points,
-        Math.cos(a) * (r + j * 0.004),
-        Math.sin(a) * (r + j * 0.004),
-        (grammar.sectorThickness[branch.sector] ?? 0.5) * (0.58 - u * 0.28),
-        0.36 + u * 0.4,
-        "tendril",
-        j * 0.002,
-        j * 0.003,
-        mass,
-      );
-    }
-  }
-
-  const hookAnchors = grammar.modifierAnchors.filter((v) => v.kind === "hook");
-  const hooks = hookAnchors.length
-    ? hookAnchors.map((v, i) => ({
-        sector: v.sector,
-        size: 0.24 + v.weight * 0.5,
-        direction: ((grammar.sweepSeed + i * 7) % 3 === 0 ? -1 : 1) as -1 | 1,
-      }))
-    : grammar.hooks;
-
-  const stepsPerHook = Math.max(2, Math.floor(hookBudget / Math.max(1, hooks.length || 1)));
-  for (const hook of hooks) {
-    const baseA = angleForSector(hook.sector);
-    for (let i = 0; i < stepsPerHook; i += 1) {
-      const u = i / Math.max(1, stepsPerHook - 1);
-      const curl = hook.direction * (0.34 + hook.size * 0.66) * u * u;
-      const a = baseA + curl;
-      const r = deformRadius(
-        a,
-        baseR + ringHalfWidth * 0.35 + hook.size * (1 - u) * 0.07,
-        baseR - ringHalfWidth * 1.5,
-        baseR + ringHalfWidth * 2.5,
-        tex,
-      );
-      if (u > 0.66 && hook.size < 0.36) continue;
-      const mass = clamp01(0.42 + 0.44 * (1 - u));
-      pushRingPoint(
-        points,
-        Math.cos(a) * r,
-        Math.sin(a) * r,
-        (grammar.sectorThickness[hook.sector] ?? 0.5) * (0.55 + (1 - u) * 0.2),
-        0.68 + u * 0.28,
-        "hook",
-        (rnd() - 0.5) * 0.002,
-        (rnd() - 0.5) * 0.0025,
-        mass,
-      );
+  for (const tendril of spec.tendrilSpecs) {
+    for (let t = 0; t < tendril.count; t += 1) {
+      const steps = tendril.lengthMin + Math.floor(rnd() * Math.max(1, tendril.lengthMax - tendril.lengthMin + 1));
+      const dirSign = rnd() < 0.5 ? -1 : 1;
+      let theta = tendril.theta + (rnd() - 0.5) * 0.22;
+      let radius = grammar.ringRadiusNorm + (rnd() - 0.5) * ringHalfWidth * 0.55;
+      let drift = 0;
+      for (let s = 0; s < steps; s += 1) {
+        const u = s / Math.max(1, steps - 1);
+        const n = fbm2(spec.seed ^ 0x27d4eb2d, t * 0.9 + u * 3.5, theta * tendril.noiseExp, 3, 1.95, 0.58);
+        drift += dirSign * (tendril.curlMin + (tendril.curlMax - tendril.curlMin) * (0.5 + 0.5 * n));
+        theta += drift * 0.07;
+        radius += ringHalfWidth * (0.06 + 0.22 * u) + n * ringHalfWidth * 0.08;
+        if (radius < ringBandMin * 0.9 || radius > ringBandMax * 1.7) break;
+        const x = Math.cos(theta) * radius;
+        const y = Math.sin(theta) * radius;
+        pushPoint(
+          points,
+          {
+            x,
+            y,
+            mass: clamp01(0.18 + (1 - u) * 0.28 + rnd() * 0.1),
+            width: clamp01(0.16 + (1 - u) * 0.2),
+            channel: "tendril",
+            phase: clamp01(0.28 + u * 0.52),
+            flowBias: 0.42 + 0.26 * (1 - u),
+          },
+          (rnd() - 0.5) * 0.01,
+          (rnd() - 0.5) * 0.01,
+        );
+      }
     }
   }
 

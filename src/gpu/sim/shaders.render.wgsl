@@ -61,6 +61,12 @@ fn fbm2(p: vec2f, octaves: i32) -> f32 {
   return v;
 }
 
+fn rot2(v: vec2f, a: f32) -> vec2f {
+  let c = cos(a);
+  let s = sin(a);
+  return vec2f(v.x * c - v.y * s, v.x * s + v.y * c);
+}
+
 struct VsOut {
   @builtin(position) position : vec4f,
   @location(0) uv : vec2f,
@@ -98,37 +104,60 @@ fn samplePigmentUv(uv: vec2f, d: vec2u) -> f32 {
 @fragment
 fn fs_volume(in: VsOut) -> @location(0) vec4f {
   let d = dims();
-  var carrier = sampleCarrierUv(in.uv, d);
-  var pigment = samplePigmentUv(in.uv, d);
-
-  let steps = max(8.0, globals.compositeSamples * 0.82);
-  for (var i = 0.0; i < steps; i = i + 1.0) {
-    let t = i / steps;
-    let drift = vec2f(
-      sin(globals.nowSec * 0.04 + t * 5.0),
-      cos(globals.nowSec * 0.05 + t * 4.0)
-    ) * (0.01 + t * 0.02);
-    let sampleUv = fract(in.uv + drift);
-    carrier += sampleCarrierUv(sampleUv, d) * (0.028 + 0.042 * (1.0 - t));
-    pigment += samplePigmentUv(sampleUv, d) * (0.03 + 0.05 * (1.0 - t));
-  }
+  let uv = in.uv;
+  let center = vec2f(0.5, 0.53);
+  let p = uv - center;
+  let radial = length(p);
+  let texel = vec2f(1.0 / f32(d.x), 1.0 / f32(d.y));
+  let c0 = sampleCarrierUv(uv, d);
+  let p0 = samplePigmentUv(uv, d);
+  let cx1 = sampleCarrierUv(uv + vec2f(texel.x, 0.0), d);
+  let cx2 = sampleCarrierUv(uv - vec2f(texel.x, 0.0), d);
+  let cy1 = sampleCarrierUv(uv + vec2f(0.0, texel.y), d);
+  let cy2 = sampleCarrierUv(uv - vec2f(0.0, texel.y), d);
+  let px1 = samplePigmentUv(uv + vec2f(texel.x, 0.0), d);
+  let px2 = samplePigmentUv(uv - vec2f(texel.x, 0.0), d);
+  let py1 = samplePigmentUv(uv + vec2f(0.0, texel.y), d);
+  let py2 = samplePigmentUv(uv - vec2f(0.0, texel.y), d);
+  let cNeighbor = (cx1 + cx2 + cy1 + cy2) * 0.25;
+  let pNeighbor = (px1 + px2 + py1 + py2) * 0.25;
+  let pGrad = abs(px1 - px2) + abs(py1 - py2);
+  let edgeKeep = smoothstep(0.16, 0.02, pGrad);
+  var carrier = c0 * 0.992 + cNeighbor * 0.0009;
+  var pigment = mix(p0 * 0.965 + pNeighbor * 0.012, p0 * 0.997 + pNeighbor * 0.0025, edgeKeep);
 
   carrier = clamp(carrier * globals.fogDensity * 0.8, 0.0, 3.5);
   pigment = clamp(pigment, 0.0, 4.5);
 
-  let absorption = carrier * globals.carrierScattering * 1.05 + pigment * globals.pigmentAbsorption * 2.35;
+  // Cinematic wispy background fog: multi-directional plume layers to avoid visible banding.
+  let drift = vec2f(globals.nowSec * 0.011, -globals.nowSec * 0.008);
+  let q0 = rot2((uv - vec2f(0.5, 0.5)) * vec2f(1.4, 1.1), 0.62) + drift;
+  let q1 = rot2((uv - vec2f(0.46, 0.55)) * vec2f(2.7, 2.0), -0.91) - drift * 0.7;
+  let q2 = rot2((uv - vec2f(0.54, 0.48)) * vec2f(4.9, 3.8), 1.17) + drift * 0.45;
+  let n0 = fbm2(q0, 4);
+  let warp = vec2f(n0 * 0.038, -n0 * 0.031);
+  let n1 = fbm2(q1 + warp, 3);
+  let n2 = fbm2(q2 - warp * 0.6, 2);
+  let plumeField = n0 * 0.53 + n1 * 0.31 + n2 * 0.16;
+  let wispy = smoothstep(-0.18, 0.42, plumeField);
+  let smokeAbsorb = wispy * (0.028 + 0.064 * smoothstep(0.6, 0.1, radial));
+  let atmosphericLift = (wispy - 0.5) * 0.032;
+  let depthLift = smoothstep(0.9, 0.22, radial) * 0.022;
+
+  let absorption = carrier * globals.carrierScattering * 0.34 + pigment * globals.pigmentAbsorption * 2.95 + smokeAbsorb;
   let transmittance = exp(-absorption);
-  var luminance = clamp(globals.fogBaseLuma * transmittance, 0.0, 1.0);
+  var luminance = clamp((globals.fogBaseLuma + depthLift + atmosphericLift) * transmittance, 0.0, 1.0);
 
   luminance = (luminance - globals.fogBaseLuma) * globals.contrast + globals.fogBaseLuma;
   luminance = clamp(luminance, 0.0, 0.94);
 
-  let filmGrain = fbm2(in.uv * vec2f(globals.viewportWidth, globals.viewportHeight) * 0.58 + vec2f(globals.nowSec * 0.35, globals.nowSec * 0.21), 3);
+  let filmCoord = rot2(uv * vec2f(181.0, 177.0) + vec2f(globals.nowSec * 0.31, globals.nowSec * 0.27), 0.41);
+  let filmGrain = fbm2(filmCoord + vec2f(0.23, 0.41), 3);
   let grainRaw = filmGrain * globals.grainAmount * 0.6;
   let midWeight = smoothstep(0.08, 0.42, luminance) * (1.0 - smoothstep(0.45, 0.84, luminance));
   luminance = clamp(luminance + grainRaw * midWeight, 0.0, 0.94);
 
-  let vignette = 0.9 + 0.1 * smoothstep(1.05, 0.3, length(in.uv - vec2f(0.5, 0.5)));
+  let vignette = 0.982 + 0.018 * smoothstep(1.08, 0.22, length(uv - vec2f(0.5, 0.5)));
   let finalLuma = clamp(luminance * vignette, 0.0, 0.94);
   return vec4f(vec3f(finalLuma), 1.0);
 }

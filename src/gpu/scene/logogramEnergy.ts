@@ -57,6 +57,12 @@ export type EnergyInputs = {
     continuityBias: number;
     sweepBias: number;
     frayBias: number;
+    massBias: number;
+    clumpCountBias: number;
+    clumpSpanBias: number;
+    tendrilCountBias: number;
+    tendrilLengthBias: number;
+    arcDropoutBias: number;
   };
   weights: EnergyWeights;
   radiusBand: { min: number; target: number; max: number };
@@ -130,6 +136,12 @@ export function buildEnergyInputs(match: MatchedLogogram, atom: Atom): EnergyInp
     continuityBias: styleBias(match.style, "continuity_bias", 0.62 + rnd() * 0.24),
     sweepBias: styleBias(match.style, "sweep_bias", 0.4 + rnd() * 0.45),
     frayBias: styleBias(match.style, "fray_bias", 0.44 + rnd() * 0.2),
+    massBias: styleBias(match.style, "mass_bias", 0.52 + rnd() * 0.24),
+    clumpCountBias: styleBias(match.style, "clump_count_bias", 0.44 + rnd() * 0.28),
+    clumpSpanBias: styleBias(match.style, "clump_span_bias", 0.48 + rnd() * 0.26),
+    tendrilCountBias: styleBias(match.style, "tendril_count_bias", 0.42 + rnd() * 0.28),
+    tendrilLengthBias: styleBias(match.style, "tendril_length_bias", 0.44 + rnd() * 0.28),
+    arcDropoutBias: styleBias(match.style, "arc_dropout_bias", 0.4 + rnd() * 0.32),
   };
   const urgency = clamp01(atom.urgency);
   const importance = clamp01(atom.importance);

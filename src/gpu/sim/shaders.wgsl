@@ -63,6 +63,42 @@ fn sampleVelocity(x: i32, y: i32, d: vec2u) -> vec2f {
   return velocityRead[toIndex(c.x, c.y, d)];
 }
 
+fn sampleScalarBilinear(buffer: ptr<storage, array<f32>, read>, pos: vec2f, d: vec2u) -> f32 {
+  let px = clamp(pos.x, 0.0, f32(d.x - 1u));
+  let py = clamp(pos.y, 0.0, f32(d.y - 1u));
+  let x0 = i32(floor(px));
+  let y0 = i32(floor(py));
+  let x1 = min(i32(d.x) - 1, x0 + 1);
+  let y1 = min(i32(d.y) - 1, y0 + 1);
+  let tx = px - f32(x0);
+  let ty = py - f32(y0);
+  let v00 = sampleScalar(buffer, x0, y0, d);
+  let v10 = sampleScalar(buffer, x1, y0, d);
+  let v01 = sampleScalar(buffer, x0, y1, d);
+  let v11 = sampleScalar(buffer, x1, y1, d);
+  let vx0 = mix(v00, v10, tx);
+  let vx1 = mix(v01, v11, tx);
+  return mix(vx0, vx1, ty);
+}
+
+fn sampleVelocityBilinear(pos: vec2f, d: vec2u) -> vec2f {
+  let px = clamp(pos.x, 0.0, f32(d.x - 1u));
+  let py = clamp(pos.y, 0.0, f32(d.y - 1u));
+  let x0 = i32(floor(px));
+  let y0 = i32(floor(py));
+  let x1 = min(i32(d.x) - 1, x0 + 1);
+  let y1 = min(i32(d.y) - 1, y0 + 1);
+  let tx = px - f32(x0);
+  let ty = py - f32(y0);
+  let v00 = sampleVelocity(x0, y0, d);
+  let v10 = sampleVelocity(x1, y0, d);
+  let v01 = sampleVelocity(x0, y1, d);
+  let v11 = sampleVelocity(x1, y1, d);
+  let vx0 = mix(v00, v10, tx);
+  let vx1 = mix(v01, v11, tx);
+  return mix(vx0, vx1, ty);
+}
+
 fn hashNoise(p: vec2f) -> f32 {
   let h = dot(p, vec2f(127.1, 311.7));
   return fract(sin(h) * 43758.5453123);
@@ -121,38 +157,33 @@ fn inject_main(@builtin(global_invocation_id) gid: vec3u) {
     let strokeDir = strokeDirRaw / strokeLen;
     let ortho = vec2f(-strokeDir.y, strokeDir.x);
 
-    // Blend capsule and streak kernels per-point to avoid repeated ellipse stamps.
+    // Ink-first stamp: isotropic core with slight oriented bias for tendrils.
     let along = dot(delta, strokeDir);
     let across = dot(delta, ortho);
-    let rShort = max(0.0006, r * (0.42 + 0.12 * (1.0 - anisotropy)));
-    let rLong = max(rShort * 1.25, r * (1.15 + anisotropy * 1.9));
-    let ellipse = exp(-0.5 * ((along * along) / (rLong * rLong) + (across * across) / (rShort * rShort)));
-    let streakLong = max(rLong * 1.55, r * 2.8);
-    let streakShort = max(rShort * 0.55, r * 0.22);
-    let streak = exp(-0.5 * ((along * along) / (streakLong * streakLong) + (across * across) / (streakShort * streakShort)));
-    let brushMix = clamp(0.18 + anisotropy * 0.7 + pigmentBias * 0.15, 0.0, 1.0);
-    let brush = mix(ellipse, streak, brushMix);
+    let rIso = max(0.00024, r * (0.54 + 0.08 * (1.0 - anisotropy)));
+    let isoKernel = exp(-0.5 * ((dist * dist) / (rIso * rIso)));
+    let rShort = max(0.00055, rIso * (0.98 - anisotropy * 0.06));
+    let rLong = max(rShort * 1.01, rIso * (1.02 + anisotropy * 0.18));
+    let streakKernel = exp(-0.5 * ((along * along) / (rLong * rLong) + (across * across) / (rShort * rShort)));
+    let brush = mix(isoKernel, streakKernel, anisotropy * 0.24);
 
     let radialDir = normalize(delta + vec2f(0.0001, 0.0001));
     let track = abs(dot(radialDir, ortho));
-    let directionalGate = mix(0.9, 0.32 + track * 0.68, anisotropy);
-
-    let edgeNoise = hashNoise(vec2f(along * 1600.0 + globals.nowSec * 0.11, across * 1600.0 + f32(i) * 0.37)) * 2.0 - 1.0;
-    let softnessNoise = hashNoise(vec2f(along * 711.0 + f32(i) * 0.13, across * 977.0 + globals.nowSec * 0.09));
-    let softness = mix(0.78, 1.26, softnessNoise);
-    let flowNoise = hashNoise(uv * vec2f(1403.0, 977.0) + vec2f(globals.nowSec * 0.17, globals.nowSec * 0.13)) * 2.0 - 1.0;
-    let edgeGate = clamp(1.0 + edgeNoise * 0.22, 0.72, 1.28);
-    let source = brush * edgeGate * softness * (0.1 + injectorStrength * 0.36) * (0.24 + depositionRate * 0.34) * directionalGate * (0.9 + flowNoise * 0.14);
-    var deposit = source * (0.15 + pigmentBias * 0.42) * globals.fogDensity;
+    let directionalGate = mix(1.0, 0.985 + track * 0.015, anisotropy * 0.05);
+    let source = brush * (0.11 + injectorStrength * 0.24) * (0.24 + depositionRate * 0.32) * directionalGate;
+    var deposit = source * (0.2 + pigmentBias * 0.46) * globals.fogDensity;
     if (count > 0u && deposit > 0.0) {
-      deposit = max(deposit, 0.00012);
+      deposit = max(deposit, 0.00025);
     }
-    pigment = min(4.2, pigment + deposit * 0.78);
-    carrier = min(3.2, carrier + deposit * 0.02 + source * 0.0012);
+    pigment = min(4.6, pigment + deposit * 1.12);
+    carrier = min(3.0, carrier + deposit * 0.0018 + source * 0.00018);
+    if (pigment > 1.2) {
+      carrier = min(3.0, carrier + (pigment - 1.2) * 0.00016);
+    }
 
-    let push = source * (0.004 + injectorStrength * 0.021 + pigmentBias * 0.007);
+    let push = source * (0.00018 + injectorStrength * 0.0012 + pigmentBias * 0.00045);
     velocity += strokeDir * push;
-    velocity += ortho * push * (0.15 + anisotropy * 0.25);
+    velocity += ortho * push * (0.012 + anisotropy * 0.02);
   }
 
   let vLen = length(velocity);
@@ -171,10 +202,15 @@ fn velocity_main(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= d.x || gid.y >= d.y) { return; }
   let idx = toIndex(gid.x, gid.y, d);
   let uv = vec2f(f32(gid.x) / f32(d.x), f32(gid.y) / f32(d.y));
-  let n = hashNoise(uv * 2.5 + vec2f(globals.nowSec * 0.031, globals.nowSec * 0.021));
+  let n = hashNoise(uv * 2.2 + vec2f(globals.nowSec * 0.028, globals.nowSec * 0.019));
   let swirl = vec2f(cos(n * 6.2831), sin(n * 6.2831));
-  let buoyancy = vec2f(0.0, -pigmentRead[idx] * 0.0012);
-  let velocity = velocityRead[idx] * 0.994 + swirl * 0.00055 + buoyancy;
+  let l = sampleVelocity(i32(gid.x) - 1, i32(gid.y), d);
+  let r = sampleVelocity(i32(gid.x) + 1, i32(gid.y), d);
+  let b = sampleVelocity(i32(gid.x), i32(gid.y) - 1, d);
+  let t = sampleVelocity(i32(gid.x), i32(gid.y) + 1, d);
+  let smoothVel = (l + r + b + t) * 0.25;
+  let buoyancy = vec2f(0.0, -pigmentRead[idx] * 0.0016);
+  let velocity = mix(velocityRead[idx], smoothVel, 0.18) * 0.992 + swirl * 0.00065 + buoyancy;
   let vLen = length(velocity);
   velocityWrite[idx] = select(velocity, velocity * (0.11 / vLen), vLen > 0.11);
   carrierWrite[idx] = carrierRead[idx];
@@ -188,14 +224,10 @@ fn advect_main(@builtin(global_invocation_id) gid: vec3u) {
   let idx = toIndex(gid.x, gid.y, d);
   let pos = vec2f(f32(gid.x), f32(gid.y));
   let vel = velocityRead[idx];
-  let back = pos - vel * globals.dtSec * 34.0;
-  let bx = i32(round(back.x));
-  let by = i32(round(back.y));
-  let b = clampCoord(bx, by, d);
-  let bIdx = toIndex(b.x, b.y, d);
-  carrierWrite[idx] = max(0.0, carrierRead[bIdx] * 0.999);
-  pigmentWrite[idx] = max(0.0, pigmentRead[bIdx] * clamp(globals.inkRetention, 0.9, 0.9999));
-  velocityWrite[idx] = velocityRead[bIdx] * 0.9985;
+  let back = pos - vel * globals.dtSec * 30.0;
+  carrierWrite[idx] = max(0.0, sampleScalarBilinear(&carrierRead, back, d) * 0.999);
+  pigmentWrite[idx] = max(0.0, sampleScalarBilinear(&pigmentRead, back, d) * clamp(globals.inkRetention, 0.9, 0.9999));
+  velocityWrite[idx] = sampleVelocityBilinear(back, d) * 0.9982;
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -248,9 +280,21 @@ fn damp_main(@builtin(global_invocation_id) gid: vec3u) {
   let d = dims();
   if (gid.x >= d.x || gid.y >= d.y) { return; }
   let idx = toIndex(gid.x, gid.y, d);
-  carrierWrite[idx] = max(0.0, carrierRead[idx] * 0.9989);
-  pigmentWrite[idx] = max(0.0, pigmentRead[idx] * clamp(globals.inkRetention, 0.9, 0.9999));
-  velocityWrite[idx] = velocityRead[idx] * 0.995;
+  let x = i32(gid.x);
+  let y = i32(gid.y);
+  let cL = sampleScalar(&carrierRead, x - 1, y, d);
+  let cR = sampleScalar(&carrierRead, x + 1, y, d);
+  let cB = sampleScalar(&carrierRead, x, y - 1, d);
+  let cT = sampleScalar(&carrierRead, x, y + 1, d);
+  let pL = sampleScalar(&pigmentRead, x - 1, y, d);
+  let pR = sampleScalar(&pigmentRead, x + 1, y, d);
+  let pB = sampleScalar(&pigmentRead, x, y - 1, d);
+  let pT = sampleScalar(&pigmentRead, x, y + 1, d);
+  let cN = (cL + cR + cB + cT) * 0.25;
+  let pN = (pL + pR + pB + pT) * 0.25;
+  carrierWrite[idx] = max(0.0, mix(carrierRead[idx], cN, 0.03) * 0.99925);
+  pigmentWrite[idx] = max(0.0, mix(pigmentRead[idx], pN, 0.06) * clamp(globals.inkRetention, 0.9, 0.9999));
+  velocityWrite[idx] = velocityRead[idx] * 0.996;
 }
 
 struct VsOut {
@@ -293,7 +337,7 @@ fn fs_volume(in: VsOut) -> @location(0) vec4f {
   var carrier = sampleCarrierUv(in.uv, d);
   var pigment = samplePigmentUv(in.uv, d);
 
-  let steps = max(6.0, globals.compositeSamples * 0.55);
+  let steps = max(4.0, globals.compositeSamples * 0.42);
   for (var i = 0.0; i < steps; i = i + 1.0) {
     let t = i / steps;
     let drift = vec2f(
@@ -301,19 +345,19 @@ fn fs_volume(in: VsOut) -> @location(0) vec4f {
       cos(globals.nowSec * 0.05 + t * 4.0)
     ) * (0.01 + t * 0.02);
     let sampleUv = fract(in.uv + drift);
-    carrier += sampleCarrierUv(sampleUv, d) * (0.015 + 0.02 * (1.0 - t));
-    pigment += samplePigmentUv(sampleUv, d) * (0.02 + 0.028 * (1.0 - t));
+    carrier += sampleCarrierUv(sampleUv, d) * (0.008 + 0.012 * (1.0 - t));
+    pigment += samplePigmentUv(sampleUv, d) * (0.012 + 0.018 * (1.0 - t));
   }
 
   carrier = clamp(carrier * globals.fogDensity * 0.8, 0.0, 3.5);
   pigment = clamp(pigment, 0.0, 4.5);
 
-  let absorption = carrier * globals.carrierScattering * 1.05 + pigment * globals.pigmentAbsorption * 2.35;
+  let absorption = carrier * globals.carrierScattering * 0.82 + pigment * globals.pigmentAbsorption * 2.88;
   let transmittance = exp(-absorption);
   var luminance = clamp(globals.fogBaseLuma * transmittance, 0.0, 1.0);
 
   luminance = (luminance - globals.fogBaseLuma) * globals.contrast + globals.fogBaseLuma;
-  luminance = clamp(luminance, 0.0, 0.94);
+  luminance = clamp(luminance, 0.0, 0.91);
 
   let filmGrain = fbm2(in.uv * vec2f(globals.viewportWidth, globals.viewportHeight) * 0.58 + vec2f(globals.nowSec * 0.35, globals.nowSec * 0.21), 3);
   let grainRaw = filmGrain * globals.grainAmount * 0.6;

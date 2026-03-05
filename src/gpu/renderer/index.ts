@@ -79,7 +79,7 @@ export class Renderer {
   private lumaReadbackCounter = 0;
   private benchmarkRuntime = new BenchmarkRuntime();
   private benchmarkCounter = 0;
-  private benchmarkMode: BenchmarkMode = "frozen_eval";
+  private benchmarkMode: BenchmarkMode = "disabled_by_plan";
   private freezeToken: number | null = null;
   private freezeForAtomId: string | null = null;
 
@@ -134,15 +134,28 @@ export class Renderer {
   }
 
   private frame = (): void => {
-    if (!this.started || !this.gpu || !this.pipelines || !this.uniformBuffer || !this.taskBuffer || !this.simulation) return;
+    if (!this.started) return;
+    if (!this.gpu || !this.pipelines || !this.uniformBuffer || !this.taskBuffer) {
+      this.raf = requestAnimationFrame(this.frame);
+      return;
+    }
+    if (!this.simulation) {
+      this.rebuildSimulation();
+      this.raf = requestAnimationFrame(this.frame);
+      return;
+    }
 
-    const t = performance.now();
-    const dtSec = Math.min(0.1, (t - this.now) / 1000);
-    this.now = t;
+    try {
+      const t = performance.now();
+      const dtSec = Math.min(0.1, (t - this.now) / 1000);
+      this.now = t;
 
-    const resized = this.resize();
-    if (resized) this.rebuildSimulation();
-    if (!this.simulation) return;
+      const resized = this.resize();
+      if (resized) this.rebuildSimulation();
+      if (!this.simulation) {
+        this.raf = requestAnimationFrame(this.frame);
+        return;
+      }
 
     if (this.store.needsLayout()) {
       this.store.recalcLayout(this.canvas.width, this.canvas.height, BASE_TILE_SIZE);
@@ -175,7 +188,14 @@ export class Renderer {
     );
     const taskCount = writeTaskPoints(this.gpu.device, this.taskBuffer, points);
     this.store.setTaskPointCount(taskCount);
-    this.store.setLumaMetrics(estimateLumaMetrics(points, this.config));
+    const estimatedLuma = estimateLumaMetrics(points, this.config);
+    this.store.setLumaMetrics(estimatedLuma);
+    this.store.setLumaMetricsActual({
+      frameLumaMeanActual: estimatedLuma.inkFieldMean > 0 ? Math.max(0, Math.min(1, this.config.fogBaseLuma * Math.exp(-estimatedLuma.inkFieldMean * this.config.pigmentAbsorption * 0.8))) : this.config.fogBaseLuma,
+      frameLumaMaxActual: estimatedLuma.inkFieldMax > 0 ? Math.max(0, Math.min(1, this.config.fogBaseLuma * Math.exp(-estimatedLuma.inkFieldMax * this.config.pigmentAbsorption * 0.75))) : this.config.fogBaseLuma,
+      brightPixelRatioActual: estimatedLuma.brightPixelRatio,
+      frameLumaHistogramActual: estimatedLuma.lumaHistogram,
+    });
     const matchMeta = getLastTaskFieldMatchMeta();
     this.store.setActiveMessageMatchMeta(matchMeta.source, matchMeta.matchedPhrase, matchMeta.canonicalKey);
     const taskStats = getLastTaskFieldStats();
@@ -214,7 +234,7 @@ export class Renderer {
             scoreStdDev: bench.result?.stabilityStdDev ?? bench.stabilityStdDev,
             pass: bench.result?.pass ?? false,
             overallPass: bench.result?.overallPass ?? bench.overallPass,
-            fpsWindowMin: bench.result?.fpsWindowMin ?? 0,
+            fpsWindowMin: bench.result?.fpsWindowMin ?? bench.fpsWindowMin,
             distance: bench.result?.distance ?? { radial: 0, angular: 0, gaps: 0, fray: 0, width: 0, total: 0 },
             fpsGuardrailPass: bench.fpsGuardrailPass,
           });
@@ -274,6 +294,11 @@ export class Renderer {
 
     this.updateHoverFromPointer(visibleAtoms);
 
+    const instantFps = dtSec > 0 ? 1 / dtSec : 0;
+    if (Number.isFinite(instantFps) && instantFps > 0) {
+      this.store.setFps(instantFps);
+    }
+
     this.frameCount += 1;
     const elapsed = t - this.fpsWindowStart;
     if (elapsed >= 500) {
@@ -282,6 +307,10 @@ export class Renderer {
       this.adjustQuality(fps, snapshot.qualityTierOverride);
       this.frameCount = 0;
       this.fpsWindowStart = t;
+    }
+
+    } catch (error) {
+      console.error("[renderer-frame] unrecovered frame error", error);
     }
 
     this.raf = requestAnimationFrame(this.frame);

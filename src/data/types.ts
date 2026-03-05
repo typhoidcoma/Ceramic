@@ -62,6 +62,12 @@ export type LogogramStyle = {
   continuity_bias?: number;
   sweep_bias?: number;
   fray_bias?: number;
+  mass_bias?: number;
+  clump_count_bias?: number;
+  clump_span_bias?: number;
+  tendril_count_bias?: number;
+  tendril_length_bias?: number;
+  arc_dropout_bias?: number;
   curvatureBias?: number;
   thicknessBias?: number;
   hookBias?: number;
@@ -88,7 +94,7 @@ export type LogogramSolveBreakdown = {
   total: number;
 };
 
-export type BenchmarkMode = "live" | "frozen_eval";
+export type BenchmarkMode = "live" | "frozen_eval" | "disabled_by_plan";
 
 export type ReferenceMaskStats = {
   ringCoverage: number;

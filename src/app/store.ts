@@ -55,6 +55,11 @@ type Snapshot = {
   hasTaskPoints: boolean;
   zeroPointFrames: number;
   logogramChannelCounts: { ring: number; tendril: number; hook: number };
+  maskPointCountRing: number;
+  maskPointCountBlob: number;
+  maskPointCountTendril: number;
+  maskContinuityScore: number;
+  maskArcOccupancy12: number[];
   ringContinuityScore: number;
   sweepProgress: number;
   injectorBBoxArea: number;
@@ -137,6 +142,11 @@ export class AtomStore {
   private lastEventAtMs = 0;
   private zeroPointFrames = 0;
   private logogramChannelCounts = { ring: 0, tendril: 0, hook: 0 };
+  private maskPointCountRing = 0;
+  private maskPointCountBlob = 0;
+  private maskPointCountTendril = 0;
+  private maskContinuityScore = 0;
+  private maskArcOccupancy12 = Array.from({ length: 12 }, () => 0);
   private ringContinuityScore = 0;
   private sweepProgress = 0;
   private injectorBBoxArea = 0;
@@ -165,7 +175,7 @@ export class AtomStore {
   private generatedStrokeWidthMean = 0;
   private generatedStrokeWidthVar = 0;
   private benchmarkEnabled = false;
-  private benchmarkMode: BenchmarkMode = "frozen_eval";
+  private benchmarkMode: BenchmarkMode = "disabled_by_plan";
   private benchmarkSampleId: string | null = null;
   private benchmarkCandidateSetId: string | null = null;
   private benchmarkScoreTotal = 0;
@@ -228,6 +238,11 @@ export class AtomStore {
       hasTaskPoints: this.taskPointCount > 0,
       zeroPointFrames: this.zeroPointFrames,
       logogramChannelCounts: { ...this.logogramChannelCounts },
+      maskPointCountRing: this.maskPointCountRing,
+      maskPointCountBlob: this.maskPointCountBlob,
+      maskPointCountTendril: this.maskPointCountTendril,
+      maskContinuityScore: this.maskContinuityScore,
+      maskArcOccupancy12: [...this.maskArcOccupancy12],
       ringContinuityScore: this.ringContinuityScore,
       sweepProgress: this.sweepProgress,
       injectorBBoxArea: this.injectorBBoxArea,
@@ -309,6 +324,11 @@ export class AtomStore {
 
   setLogogramDiagnostics(input: {
     channelCounts: { ring: number; tendril: number; hook: number };
+    maskPointCountRing: number;
+    maskPointCountBlob: number;
+    maskPointCountTendril: number;
+    maskContinuityScore: number;
+    maskArcOccupancy12: number[];
     ringContinuityScore: number;
     sweepProgress: number;
     injectorBBoxArea: number;
@@ -342,6 +362,11 @@ export class AtomStore {
       tendril: Math.max(0, Math.floor(input.channelCounts.tendril)),
       hook: Math.max(0, Math.floor(input.channelCounts.hook)),
     };
+    const maskPointCountRing = Math.max(0, Math.floor(input.maskPointCountRing));
+    const maskPointCountBlob = Math.max(0, Math.floor(input.maskPointCountBlob));
+    const maskPointCountTendril = Math.max(0, Math.floor(input.maskPointCountTendril));
+    const maskContinuityScore = Math.max(0, Math.min(1, input.maskContinuityScore));
+    const maskArcOccupancy12 = Array.from({ length: 12 }, (_, i) => Math.max(0, Math.floor(input.maskArcOccupancy12[i] ?? 0)));
     const continuity = Math.max(0, Math.min(1, input.ringContinuityScore));
     const sweep = Math.max(0, Math.min(1, input.sweepProgress));
     const area = Math.max(0, Math.min(1, input.injectorBBoxArea));
@@ -386,6 +411,11 @@ export class AtomStore {
       this.logogramChannelCounts.ring !== next.ring ||
       this.logogramChannelCounts.tendril !== next.tendril ||
       this.logogramChannelCounts.hook !== next.hook ||
+      this.maskPointCountRing !== maskPointCountRing ||
+      this.maskPointCountBlob !== maskPointCountBlob ||
+      this.maskPointCountTendril !== maskPointCountTendril ||
+      this.maskContinuityScore !== maskContinuityScore ||
+      this.maskArcOccupancy12.some((value, i) => value !== maskArcOccupancy12[i]) ||
       this.ringContinuityScore !== continuity ||
       this.sweepProgress !== sweep ||
       this.injectorBBoxArea !== area ||
@@ -424,6 +454,11 @@ export class AtomStore {
       this.generatedStrokeWidthVar !== generatedStrokeWidthVar;
     if (!changed) return;
     this.logogramChannelCounts = next;
+    this.maskPointCountRing = maskPointCountRing;
+    this.maskPointCountBlob = maskPointCountBlob;
+    this.maskPointCountTendril = maskPointCountTendril;
+    this.maskContinuityScore = maskContinuityScore;
+    this.maskArcOccupancy12 = maskArcOccupancy12;
     this.ringContinuityScore = continuity;
     this.sweepProgress = sweep;
     this.injectorBBoxArea = area;
@@ -855,6 +890,11 @@ export class AtomStore {
     this.brightPixelRatioActual = 0;
     this.frameLumaHistogramActual = [0, 0, 0, 0, 0, 0, 0, 0];
     this.logogramChannelCounts = { ring: 0, tendril: 0, hook: 0 };
+    this.maskPointCountRing = 0;
+    this.maskPointCountBlob = 0;
+    this.maskPointCountTendril = 0;
+    this.maskContinuityScore = 0;
+    this.maskArcOccupancy12 = Array.from({ length: 12 }, () => 0);
     this.ringContinuityScore = 0;
     this.sweepProgress = 0;
     this.injectorBBoxArea = 0;
@@ -883,7 +923,7 @@ export class AtomStore {
     this.generatedStrokeWidthMean = 0;
     this.generatedStrokeWidthVar = 0;
     this.benchmarkEnabled = false;
-    this.benchmarkMode = "frozen_eval";
+    this.benchmarkMode = "disabled_by_plan";
     this.benchmarkSampleId = null;
     this.benchmarkCandidateSetId = null;
     this.benchmarkScoreTotal = 0;

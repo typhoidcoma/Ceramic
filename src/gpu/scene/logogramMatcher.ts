@@ -104,7 +104,16 @@ export function matchLogogramFromMessage(atom: Atom): MatchedLogogram {
     warnOnce("dictionary_unavailable", { atomId: atom.id });
     return buildUnknownMatch(normalized, atom.id);
   }
-  let best:
+  let exact:
+    | {
+        phrase: string;
+        canonicalKey: string;
+        id: string;
+        segmentMask: number;
+        style: Record<string, unknown>;
+      }
+    | undefined;
+  let bestSubstring:
     | {
         phrase: string;
         canonicalKey: string;
@@ -116,9 +125,20 @@ export function matchLogogramFromMessage(atom: Atom): MatchedLogogram {
 
   for (const entry of entries) {
     const phrase = normalizeMessage(entry.phrase);
-    if (!phrase || !normalized.includes(phrase)) continue;
-    if (!best) {
-      best = {
+    if (!phrase) continue;
+    if (phrase === normalized) {
+      exact = {
+        phrase,
+        canonicalKey: entry.canonicalKey,
+        id: entry.id,
+        segmentMask: entry.segmentMask,
+        style: entry.style,
+      };
+      break;
+    }
+    if (!normalized.includes(phrase)) continue;
+    if (!bestSubstring) {
+      bestSubstring = {
         phrase,
         canonicalKey: entry.canonicalKey,
         id: entry.id,
@@ -127,8 +147,11 @@ export function matchLogogramFromMessage(atom: Atom): MatchedLogogram {
       };
       continue;
     }
-    if (phrase.length > best.phrase.length || (phrase.length === best.phrase.length && entry.canonicalKey < best.canonicalKey)) {
-      best = {
+    if (
+      phrase.length > bestSubstring.phrase.length ||
+      (phrase.length === bestSubstring.phrase.length && entry.canonicalKey < bestSubstring.canonicalKey)
+    ) {
+      bestSubstring = {
         phrase,
         canonicalKey: entry.canonicalKey,
         id: entry.id,
@@ -138,6 +161,7 @@ export function matchLogogramFromMessage(atom: Atom): MatchedLogogram {
     }
   }
 
+  const best = exact ?? bestSubstring;
   if (!best) return buildUnknownMatch(normalized, atom.id);
   const hash = hashToHex8(hashStringU32(normalized));
   return {

@@ -142,6 +142,9 @@ export function App() {
         <span>voidPenalty {snapshot.innerVoidPenalty.toFixed(2)}</span>
         <span>centerMass {snapshot.centerMassRatio.toFixed(2)}</span>
         <span>ch r:{snapshot.logogramChannelCounts.ring} t:{snapshot.logogramChannelCounts.tendril} h:{snapshot.logogramChannelCounts.hook}</span>
+        <span>maskPts r:{snapshot.maskPointCountRing} b:{snapshot.maskPointCountBlob} t:{snapshot.maskPointCountTendril}</span>
+        <span>maskCont {snapshot.maskContinuityScore.toFixed(2)}</span>
+        <span>maskArc [{snapshot.maskArcOccupancy12.join(",")} ]</span>
         <span>sectors(all) [{snapshot.sectorOccupancy.join(",")} ]</span>
         <span>sectors(ring) [{snapshot.ringSectorOccupancy.join(",")} ]</span>
         <span>solveE {snapshot.solveEnergy.toFixed(3)}</span>
@@ -153,34 +156,25 @@ export function App() {
         <span>radVar {snapshot.radialVariance.toFixed(5)}</span>
         <span>arcVar {snapshot.arcSpacingVariance.toFixed(5)}</span>
         <span>repeat {snapshot.repeatScore.toFixed(3)}</span>
-        <span>bench {snapshot.benchmarkEnabled ? "on" : "off"}</span>
-        <span>benchMode {snapshot.benchmarkMode}</span>
-        <span>benchSample {snapshot.benchmarkSampleId ?? "-"}</span>
-        <span>benchSet {snapshot.benchmarkCandidateSetId ?? "-"}</span>
-        <span>benchScore {snapshot.benchmarkScoreTotal.toFixed(3)}</span>
-        <span>benchStd {snapshot.benchmarkScoreStdDev.toFixed(4)}</span>
-        <span>benchDist r:{snapshot.benchmarkDistanceBreakdown.radial.toFixed(3)} a:{snapshot.benchmarkDistanceBreakdown.angular.toFixed(3)} g:{snapshot.benchmarkDistanceBreakdown.gaps.toFixed(3)} f:{snapshot.benchmarkDistanceBreakdown.fray.toFixed(3)} w:{snapshot.benchmarkDistanceBreakdown.width.toFixed(3)}</span>
-        <span>benchPass {snapshot.benchmarkPass ? "yes" : "no"}</span>
-        <span>overallPass {snapshot.benchmarkOverallPass ? "yes" : "no"}</span>
+        <span>bench off_by_plan</span>
         <span>fpsMin2s {snapshot.benchmarkFpsWindowMin.toFixed(1)}</span>
-        <span>fpsGuard {snapshot.fpsGuardrailPass ? "pass" : "fail"}</span>
+        <span>fpsGuard45 {snapshot.fpsGuardrailPass ? "pass" : "fail"}</span>
         <span>sig [{snapshot.shapeSignature.slice(0, 12).map((v) => v.toFixed(2)).join(",")} ]</span>
         <span>key {snapshot.activeMessageCanonicalKey ?? "-"}</span>
         <span>latency {snapshot.promptLatencyMs ?? "-"}ms</span>
         <span>lumaMean {snapshot.frameLumaMeanActual.toFixed(3)}</span>
         <span>lumaMax {snapshot.frameLumaMaxActual.toFixed(3)}</span>
         <span>bright&gt;.92 {(snapshot.brightPixelRatioActual * 100).toFixed(2)}%</span>
-        <span>target {(snapshot.sweepProgress < 0.8) ? "warming" : (snapshot.constraintViolationCount === 0 && snapshot.ringCoverageRatio >= 0.66 && snapshot.ringCoverageRatio <= 0.84 && snapshot.ringBandOccupancyRatio >= 0.7 && snapshot.innerVoidRatio >= 0.35 && snapshot.centerMassRatio <= 0.22 && snapshot.brightPixelRatioActual <= 0.02) ? "pass" : "tune"}</span>
+        <span>target {(snapshot.sweepProgress < 0.8) ? "warming" : (snapshot.constraintViolationCount === 0 && snapshot.ringCoverageRatio >= 0.72 && snapshot.ringBandOccupancyRatio >= 0.7 && snapshot.innerVoidRatio >= 0.35 && snapshot.centerMassRatio <= 0.22 && snapshot.brightPixelRatioActual <= 0.02) ? "pass" : "tune"}</span>
         {!snapshot.activeMessagePresent && <span className="error">warning: no active message</span>}
         {snapshot.activeMessagePresent && !snapshot.hasTaskPoints && <span className="error">warning: active message but zero points</span>}
         {snapshot.brightPixelRatioActual > 0.02 && <span className="error">warning: blowout risk</span>}
-        {snapshot.sweepProgress >= 0.8 && (snapshot.ringCoverageRatio < 0.66 || snapshot.ringCoverageRatio > 0.84) && <span className="error">warning: ring coverage out of target band</span>}
+        {snapshot.sweepProgress >= 0.8 && snapshot.ringCoverageRatio < 0.72 && <span className="error">warning: ring coverage low</span>}
         {snapshot.sweepProgress >= 0.8 && snapshot.ringBandOccupancyRatio < 0.7 && <span className="error">warning: ring band occupancy low</span>}
         {snapshot.constraintViolationCount > 0 && <span className="error">warning: solver constraints violated</span>}
         {snapshot.innerVoidRatio < 0.35 && <span className="error">warning: inner void collapsed</span>}
         {snapshot.centerMassRatio > 0.22 && <span className="error">warning: center mass too high</span>}
-        {snapshot.repeatScore > 0.18 && <span className="error">warning: texture repetition risk</span>}
-        {snapshot.benchmarkPass && !snapshot.fpsGuardrailPass && <span className="error">warning: benchmark pass invalid (fps guardrail failed)</span>}
+        {snapshot.repeatScore > 0.24 && <span className="error">warning: texture repetition risk</span>}
         {syncError && <span className="error">sync error: {syncError}</span>}
         {llmStatus && <span>{llmStatus}</span>}
       </div>

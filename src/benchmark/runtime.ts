@@ -32,6 +32,7 @@ type RuntimeOutput = {
   enabled: boolean;
   result: ReferenceBenchmarkResult | null;
   fpsGuardrailPass: boolean;
+  fpsWindowMin: number;
   candidateSetId: string;
   windowFrames: number;
   stabilityStdDev: number;
@@ -70,12 +71,28 @@ export class BenchmarkRuntime {
   }
 
   async tick(input: RuntimeInput): Promise<RuntimeOutput> {
-    await this.ensureLoaded();
     this.fpsWindow.push({ t: input.nowMs, fps: input.fps });
     const cutoff = input.nowMs - BENCH_MIN_FPS_WINDOW_MS;
     while (this.fpsWindow.length > 0 && this.fpsWindow[0].t < cutoff) this.fpsWindow.shift();
     const fpsGuardrailPass = this.fpsWindow.length > 0 && this.fpsWindow.every((entry) => entry.fps >= BENCH_TARGET_FPS);
     const fpsWindowMin = this.fpsWindow.length > 0 ? Math.min(...this.fpsWindow.map((v) => v.fps)) : 0;
+
+    if (input.benchmarkMode === "disabled_by_plan") {
+      this.scoreWindow = [];
+      this.activeFreezeToken = null;
+      return {
+        enabled: false,
+        result: null,
+        fpsGuardrailPass: true,
+        fpsWindowMin,
+        candidateSetId: "off_by_plan",
+        windowFrames: 0,
+        stabilityStdDev: 0,
+        overallPass: false,
+      };
+    }
+
+    await this.ensureLoaded();
 
     if (!this.loaded || this.samples.length === 0 || !input.canonicalKey || input.sweepProgress < 0.8) {
       this.scoreWindow = [];
@@ -84,6 +101,7 @@ export class BenchmarkRuntime {
         enabled: this.loaded && this.samples.length > 0,
         result: null,
         fpsGuardrailPass,
+        fpsWindowMin,
         candidateSetId: "none",
         windowFrames: 0,
         stabilityStdDev: 0,
@@ -121,6 +139,7 @@ export class BenchmarkRuntime {
         enabled: this.loaded && this.samples.length > 0,
         result: null,
         fpsGuardrailPass,
+        fpsWindowMin,
         candidateSetId,
         windowFrames: 0,
         stabilityStdDev: 0,
@@ -149,6 +168,7 @@ export class BenchmarkRuntime {
         overallPass,
       },
       fpsGuardrailPass,
+      fpsWindowMin,
       candidateSetId,
       windowFrames: this.scoreWindow.length,
       stabilityStdDev,

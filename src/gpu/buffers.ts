@@ -98,21 +98,23 @@ export function writeUniforms(device: GPUDevice, buffer: GPUBuffer, input: Unifo
 export function writeTaskPoints(device: GPUDevice, buffer: GPUBuffer, points: TaskPoint[]): number {
   const count = Math.min(MAX_TASK_POINTS, points.length);
   const values = new Float32Array(MAX_TASK_POINTS * TASK_POINT_FLOATS);
+  const finiteOr = (v: number, fallback: number) => (Number.isFinite(v) && !Number.isNaN(v) ? v : fallback);
+  const clamp01 = (v: number) => (v <= 0 ? 0 : v >= 1 ? 1 : v);
   for (let i = 0; i < count; i += 1) {
     const p = points[i];
     const base = i * TASK_POINT_FLOATS;
-    values[base + 0] = p.nx;
-    values[base + 1] = p.ny;
-    values[base + 2] = p.nz;
-    values[base + 3] = p.radius;
-    values[base + 4] = p.urgency;
-    values[base + 5] = p.importance;
-    values[base + 6] = p.selected;
-    values[base + 7] = p.hovered;
-    values[base + 8] = p.dirX;
-    values[base + 9] = p.dirY;
-    values[base + 10] = p.coherence;
-    values[base + 11] = p.ink;
+    values[base + 0] = clamp01(finiteOr(p.nx, 0.5));
+    values[base + 1] = clamp01(finiteOr(p.ny, 0.5));
+    values[base + 2] = clamp01(finiteOr(p.nz, 0.5));
+    values[base + 3] = Math.max(0, finiteOr(p.radius, 0.001));
+    values[base + 4] = clamp01(finiteOr(p.urgency, 0));
+    values[base + 5] = clamp01(finiteOr(p.importance, 0));
+    values[base + 6] = clamp01(finiteOr(p.selected, 0));
+    values[base + 7] = clamp01(finiteOr(p.hovered, 0));
+    values[base + 8] = finiteOr(p.dirX, 0);
+    values[base + 9] = finiteOr(p.dirY, 0);
+    values[base + 10] = clamp01(finiteOr(p.coherence, 0));
+    values[base + 11] = clamp01(finiteOr(p.ink, 0));
   }
   device.queue.writeBuffer(buffer, 0, values.buffer);
   return count;
