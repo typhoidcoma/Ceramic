@@ -12,6 +12,8 @@ import { BenchmarkRuntime } from "../../benchmark/runtime";
 import { BENCH_TARGET_FPS } from "../sim/constants";
 import type { BenchmarkMode } from "../../data/types";
 
+const LOGOGRAM_V2_MASK_PIPELINE = (import.meta.env.VITE_LOGOGRAM_V2_MASK_PIPELINE ?? "1") !== "0";
+
 const DEFAULT_CONFIG: RendererConfig = {
   qualityTier: "auto",
   simResolutionScale: QUALITY_PRESETS.balanced.simResolutionScale,
@@ -56,6 +58,30 @@ function estimateLumaMetrics(points: TaskPoint[], config: RendererConfig): { ink
   };
 }
 
+function buildSimMaskFields(points: TaskPoint[], simWidth: number, simHeight: number): { ring: Float32Array; blob: Float32Array; tendril: Float32Array; flow: Float32Array } {
+  const cellCount = Math.max(1, simWidth * simHeight);
+  const ring = new Float32Array(cellCount);
+  const blob = new Float32Array(cellCount);
+  const tendril = new Float32Array(cellCount);
+  const flow = new Float32Array(cellCount * 2);
+  for (const p of points) {
+    const x = Math.max(0, Math.min(simWidth - 1, Math.floor(p.nx * simWidth)));
+    const y = Math.max(0, Math.min(simHeight - 1, Math.floor(p.ny * simHeight)));
+    const i = y * simWidth + x;
+    const coherence = clamp01(p.coherence);
+    const ink = clamp01(p.ink);
+    const ringW = coherence * (0.55 + 0.45 * ink);
+    const blobW = Math.max(0, ink - coherence * 0.55);
+    const tendrilW = Math.max(0, coherence * 0.8 - ink * 0.35);
+    ring[i] += ringW;
+    blob[i] += blobW;
+    tendril[i] += tendrilW;
+    flow[i * 2] += p.dirX * (0.4 + ink * 0.6);
+    flow[i * 2 + 1] += p.dirY * (0.4 + ink * 0.6);
+  }
+  return { ring, blob, tendril, flow };
+}
+
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private store: AtomStore;
@@ -82,6 +108,9 @@ export class Renderer {
   private benchmarkMode: BenchmarkMode = "disabled_by_plan";
   private freezeToken: number | null = null;
   private freezeForAtomId: string | null = null;
+  private maskPipelineEnabled = LOGOGRAM_V2_MASK_PIPELINE;
+  private lastFrameLumaMeanActual: number | null = null;
+  private bgDarkDriftRate = 0;
 
   constructor(canvas: HTMLCanvasElement, store: AtomStore, initial?: Partial<RendererConfig>) {
     this.canvas = canvas;
@@ -117,6 +146,14 @@ export class Renderer {
   resetView(): void {
     this.camera = createCamera3D();
     this.store.markLayoutDirty();
+  }
+
+  setMaskPipelineEnabled(next: boolean): void {
+    this.maskPipelineEnabled = !!next;
+  }
+
+  getMaskPipelineEnabled(): boolean {
+    return this.maskPipelineEnabled;
   }
 
   private rebuildSimulation(): void {
@@ -188,10 +225,30 @@ export class Renderer {
     );
     const taskCount = writeTaskPoints(this.gpu.device, this.taskBuffer, points);
     this.store.setTaskPointCount(taskCount);
+    if (this.maskPipelineEnabled) {
+      const masks = buildSimMaskFields(points, this.simulation.resources.simWidth, this.simulation.resources.simHeight);
+      this.gpu.device.queue.writeBuffer(this.simulation.resources.maskRing, 0, masks.ring.buffer);
+      this.gpu.device.queue.writeBuffer(this.simulation.resources.maskBlob, 0, masks.blob.buffer);
+      this.gpu.device.queue.writeBuffer(this.simulation.resources.maskTendril, 0, masks.tendril.buffer);
+      this.gpu.device.queue.writeBuffer(this.simulation.resources.maskFlow, 0, masks.flow.buffer);
+    } else {
+      const zerosScalar = new Float32Array(this.simulation.resources.cellCount);
+      const zerosVec2 = new Float32Array(this.simulation.resources.cellCount * 2);
+      this.gpu.device.queue.writeBuffer(this.simulation.resources.maskRing, 0, zerosScalar.buffer);
+      this.gpu.device.queue.writeBuffer(this.simulation.resources.maskBlob, 0, zerosScalar.buffer);
+      this.gpu.device.queue.writeBuffer(this.simulation.resources.maskTendril, 0, zerosScalar.buffer);
+      this.gpu.device.queue.writeBuffer(this.simulation.resources.maskFlow, 0, zerosVec2.buffer);
+    }
     const estimatedLuma = estimateLumaMetrics(points, this.config);
     this.store.setLumaMetrics(estimatedLuma);
+    const frameLumaMeanActual = estimatedLuma.inkFieldMean > 0 ? Math.max(0, Math.min(1, this.config.fogBaseLuma * Math.exp(-estimatedLuma.inkFieldMean * this.config.pigmentAbsorption * 0.8))) : this.config.fogBaseLuma;
+    if (this.lastFrameLumaMeanActual !== null) {
+      const darkDelta = this.lastFrameLumaMeanActual - frameLumaMeanActual;
+      this.bgDarkDriftRate = this.bgDarkDriftRate * 0.9 + darkDelta * 0.1;
+    }
+    this.lastFrameLumaMeanActual = frameLumaMeanActual;
     this.store.setLumaMetricsActual({
-      frameLumaMeanActual: estimatedLuma.inkFieldMean > 0 ? Math.max(0, Math.min(1, this.config.fogBaseLuma * Math.exp(-estimatedLuma.inkFieldMean * this.config.pigmentAbsorption * 0.8))) : this.config.fogBaseLuma,
+      frameLumaMeanActual,
       frameLumaMaxActual: estimatedLuma.inkFieldMax > 0 ? Math.max(0, Math.min(1, this.config.fogBaseLuma * Math.exp(-estimatedLuma.inkFieldMax * this.config.pigmentAbsorption * 0.75))) : this.config.fogBaseLuma,
       brightPixelRatioActual: estimatedLuma.brightPixelRatio,
       frameLumaHistogramActual: estimatedLuma.lumaHistogram,
@@ -199,7 +256,7 @@ export class Renderer {
     const matchMeta = getLastTaskFieldMatchMeta();
     this.store.setActiveMessageMatchMeta(matchMeta.source, matchMeta.matchedPhrase, matchMeta.canonicalKey);
     const taskStats = getLastTaskFieldStats();
-    this.store.setLogogramDiagnostics(taskStats);
+    this.store.setLogogramDiagnostics({ ...taskStats, bgDarkDriftRate: this.bgDarkDriftRate });
     if (this.benchmarkCounter % 10 === 0) {
       void this.benchmarkRuntime
         .tick({

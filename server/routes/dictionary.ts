@@ -4,7 +4,7 @@ import { getDb } from "../db";
 
 const QuerySchema = z.object({
   language: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(500).optional(),
+  limit: z.coerce.number().int().min(1).max(2000).optional(),
 });
 
 export const dictionaryRouter = Router();

@@ -38,6 +38,10 @@ struct TaskPoint {
 @group(0) @binding(8) var<storage, read_write> pressureWrite : array<f32>;
 @group(0) @binding(9) var<storage, read_write> divergence : array<f32>;
 @group(0) @binding(10) var<storage, read> tasks : array<TaskPoint>;
+@group(0) @binding(11) var<storage, read> maskRing : array<f32>;
+@group(0) @binding(12) var<storage, read> maskBlob : array<f32>;
+@group(0) @binding(13) var<storage, read> maskTendril : array<f32>;
+@group(0) @binding(14) var<storage, read> maskFlow : array<vec2f>;
 
 fn dims() -> vec2u {
   return vec2u(u32(max(1.0, globals.simWidth)), u32(max(1.0, globals.simHeight)));
@@ -134,9 +138,20 @@ fn inject_main(@builtin(global_invocation_id) gid: vec3u) {
   let idx = toIndex(gid.x, gid.y, d);
   let uv = vec2f((f32(gid.x) + 0.5) / f32(d.x), (f32(gid.y) + 0.5) / f32(d.y));
 
-  var carrier = carrierWrite[idx] * 0.9985;
+  var carrier = carrierWrite[idx] * 0.9968;
   var pigment = pigmentWrite[idx] * clamp(globals.inkRetention, 0.9, 0.9999);
   var velocity = velocityWrite[idx] * 0.992;
+
+  // Pre-fluid procedural mask compositing stage.
+  let mr = max(0.0, maskRing[idx]);
+  let mb = max(0.0, maskBlob[idx]);
+  let mt = max(0.0, maskTendril[idx]);
+  let mf = maskFlow[idx];
+  let maskInk = (mr * 0.7 + mb * 1.18 + mt * 0.46) * globals.fogDensity;
+  let maskCarrier = (mr * 0.0022 + mb * 0.0012 + mt * 0.0016);
+  pigment = min(4.6, pigment + maskInk * 0.055);
+  carrier = min(3.0, carrier + maskCarrier);
+  velocity += mf * (0.00055 + clamp(maskInk, 0.0, 1.0) * 0.00095);
 
   let count = u32(globals.taskCount);
   for (var i = 0u; i < count; i = i + 1u) {
@@ -175,10 +190,10 @@ fn inject_main(@builtin(global_invocation_id) gid: vec3u) {
     if (count > 0u && deposit > 0.0) {
       deposit = max(deposit, 0.00025);
     }
-    pigment = min(4.6, pigment + deposit * 1.12);
-    carrier = min(3.0, carrier + deposit * 0.0018 + source * 0.00018);
+    pigment = min(4.6, pigment + deposit * 0.96);
+    carrier = min(3.0, carrier + deposit * 0.00105 + source * 0.00008);
     if (pigment > 1.2) {
-      carrier = min(3.0, carrier + (pigment - 1.2) * 0.00016);
+      carrier = min(3.0, carrier + (pigment - 1.2) * 0.00005);
     }
 
     let push = source * (0.00018 + injectorStrength * 0.0012 + pigmentBias * 0.00045);
@@ -292,8 +307,8 @@ fn damp_main(@builtin(global_invocation_id) gid: vec3u) {
   let pT = sampleScalar(&pigmentRead, x, y + 1, d);
   let cN = (cL + cR + cB + cT) * 0.25;
   let pN = (pL + pR + pB + pT) * 0.25;
-  carrierWrite[idx] = max(0.0, mix(carrierRead[idx], cN, 0.03) * 0.99925);
-  pigmentWrite[idx] = max(0.0, mix(pigmentRead[idx], pN, 0.06) * clamp(globals.inkRetention, 0.9, 0.9999));
+  carrierWrite[idx] = max(0.0, mix(carrierRead[idx], cN, 0.05) * 0.9989);
+  pigmentWrite[idx] = max(0.0, mix(pigmentRead[idx], pN, 0.1) * clamp(globals.inkRetention, 0.9, 0.9999) - 0.00011);
   velocityWrite[idx] = velocityRead[idx] * 0.996;
 }
 
@@ -345,14 +360,14 @@ fn fs_volume(in: VsOut) -> @location(0) vec4f {
       cos(globals.nowSec * 0.05 + t * 4.0)
     ) * (0.01 + t * 0.02);
     let sampleUv = fract(in.uv + drift);
-    carrier += sampleCarrierUv(sampleUv, d) * (0.008 + 0.012 * (1.0 - t));
-    pigment += samplePigmentUv(sampleUv, d) * (0.012 + 0.018 * (1.0 - t));
+    carrier += sampleCarrierUv(sampleUv, d) * (0.003 + 0.006 * (1.0 - t));
+    pigment += samplePigmentUv(sampleUv, d) * (0.01 + 0.014 * (1.0 - t));
   }
 
   carrier = clamp(carrier * globals.fogDensity * 0.8, 0.0, 3.5);
   pigment = clamp(pigment, 0.0, 4.5);
 
-  let absorption = carrier * globals.carrierScattering * 0.82 + pigment * globals.pigmentAbsorption * 2.88;
+  let absorption = carrier * globals.carrierScattering * 0.56 + pigment * globals.pigmentAbsorption * 3.35;
   let transmittance = exp(-absorption);
   var luminance = clamp(globals.fogBaseLuma * transmittance, 0.0, 1.0);
 

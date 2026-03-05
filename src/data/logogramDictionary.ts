@@ -29,7 +29,7 @@ export async function loadDictionary(language = "heptapod_b_v1"): Promise<void> 
   phraseMap = new Map();
   canonicalMap = new Map();
 
-  const response = await fetch(apiUrl(`/api/dictionary?language=${encodeURIComponent(language)}&limit=200`));
+  const response = await fetch(apiUrl(`/api/dictionary?language=${encodeURIComponent(language)}&limit=1000`));
   if (!response.ok) return;
   const data = (await response.json()) as { entries?: DictionaryRow[] };
   const rows = Array.isArray(data.entries) ? data.entries : [];

@@ -56,11 +56,45 @@ function extractOutputText(json: unknown): string {
   return "";
 }
 
+function matchDictionaryPrompt(promptNorm: string, dictionary: DictEntry[]): DictEntry | null {
+  if (!promptNorm) return null;
+  let exact: DictEntry | null = null;
+  let bestSubstring: DictEntry | null = null;
+  let bestLen = 0;
+
+  for (const row of dictionary) {
+    const phraseNorm = normalizePrompt(row.phrase);
+    if (!phraseNorm) continue;
+    if (phraseNorm === promptNorm) {
+      exact = row;
+      break;
+    }
+    if (!promptNorm.includes(phraseNorm)) continue;
+    if (phraseNorm.length > bestLen || (phraseNorm.length === bestLen && row.canonical_key < (bestSubstring?.canonical_key ?? "~"))) {
+      bestSubstring = row;
+      bestLen = phraseNorm.length;
+    }
+  }
+
+  return exact ?? bestSubstring;
+}
+
 export async function generateMessageFromPrompt(userPrompt: string, dictionary: DictEntry[]): Promise<GeneratedLogogramMessage> {
   const started = Date.now();
   const prompt = userPrompt.trim();
   const promptNorm = normalizePrompt(prompt);
   const key = process.env.OPENAI_API_KEY?.trim();
+  const directMatch = matchDictionaryPrompt(promptNorm, dictionary);
+
+  if (directMatch) {
+    return {
+      messageText: prompt.split(/\s+/).slice(0, 12).join(" ") || directMatch.phrase,
+      canonicalKey: directMatch.canonical_key,
+      matchedPhrase: directMatch.phrase,
+      source: "dictionary",
+      latencyMs: Date.now() - started,
+    };
+  }
 
   if (!key || dictionary.length === 0) {
     return {

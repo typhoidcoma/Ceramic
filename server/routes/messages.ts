@@ -21,7 +21,7 @@ messagesRouter.post("/generate", async (req, res) => {
 
   const db = await getDb();
   const dictionary = await db.all<Array<{ canonical_key: string; phrase: string }>>(
-    `SELECT canonical_key, phrase FROM logogram_dictionary WHERE language = ? AND is_active = 1 LIMIT 200`,
+    `SELECT canonical_key, phrase FROM logogram_dictionary WHERE language = ? AND is_active = 1 ORDER BY phrase ASC LIMIT 1000`,
     [parsed.data.language],
   );
 

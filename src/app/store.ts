@@ -81,6 +81,12 @@ type Snapshot = {
   radialVariance: number;
   arcSpacingVariance: number;
   repeatScore: number;
+  ringContinuityRuns: number;
+  largestBlobArcRatio: number;
+  dripCount: number;
+  dripLengthMean: number;
+  whiskerCount: number;
+  bgDarkDriftRate: number;
   generatedRadialProfile: number[];
   generatedAngularHistogram12: number[];
   generatedGapCount: number;
@@ -168,6 +174,12 @@ export class AtomStore {
   private radialVariance = 0;
   private arcSpacingVariance = 0;
   private repeatScore = 0;
+  private ringContinuityRuns = 0;
+  private largestBlobArcRatio = 0;
+  private dripCount = 0;
+  private dripLengthMean = 0;
+  private whiskerCount = 0;
+  private bgDarkDriftRate = 0;
   private generatedRadialProfile = Array.from({ length: 24 }, () => 0);
   private generatedAngularHistogram12 = Array.from({ length: 12 }, () => 0);
   private generatedGapCount = 0;
@@ -268,6 +280,12 @@ export class AtomStore {
       radialVariance: this.radialVariance,
       arcSpacingVariance: this.arcSpacingVariance,
       repeatScore: this.repeatScore,
+      ringContinuityRuns: this.ringContinuityRuns,
+      largestBlobArcRatio: this.largestBlobArcRatio,
+      dripCount: this.dripCount,
+      dripLengthMean: this.dripLengthMean,
+      whiskerCount: this.whiskerCount,
+      bgDarkDriftRate: this.bgDarkDriftRate,
       generatedRadialProfile: [...this.generatedRadialProfile],
       generatedAngularHistogram12: [...this.generatedAngularHistogram12],
       generatedGapCount: this.generatedGapCount,
@@ -350,6 +368,12 @@ export class AtomStore {
     radialVariance: number;
     arcSpacingVariance: number;
     repeatScore: number;
+    ringContinuityRuns: number;
+    largestBlobArcRatio: number;
+    dripCount: number;
+    dripLengthMean: number;
+    whiskerCount: number;
+    bgDarkDriftRate: number;
     generatedRadialProfile: number[];
     generatedAngularHistogram12: number[];
     generatedGapCount: number;
@@ -401,6 +425,12 @@ export class AtomStore {
     const radialVariance = Number.isFinite(input.radialVariance) ? Math.max(0, input.radialVariance) : 0;
     const arcSpacingVariance = Number.isFinite(input.arcSpacingVariance) ? Math.max(0, input.arcSpacingVariance) : 0;
     const repeatScore = Number.isFinite(input.repeatScore) ? Math.max(0, Math.min(1, input.repeatScore)) : 0;
+    const ringContinuityRuns = Math.max(0, Math.floor(input.ringContinuityRuns));
+    const largestBlobArcRatio = Number.isFinite(input.largestBlobArcRatio) ? Math.max(0, Math.min(1, input.largestBlobArcRatio)) : 0;
+    const dripCount = Math.max(0, Math.floor(input.dripCount));
+    const dripLengthMean = Number.isFinite(input.dripLengthMean) ? Math.max(0, input.dripLengthMean) : 0;
+    const whiskerCount = Math.max(0, Math.floor(input.whiskerCount));
+    const bgDarkDriftRate = Number.isFinite(input.bgDarkDriftRate) ? Math.max(-1, Math.min(1, input.bgDarkDriftRate)) : 0;
     const generatedRadialProfile = Array.from({ length: 24 }, (_, i) => Math.max(0, input.generatedRadialProfile[i] ?? 0));
     const generatedAngularHistogram12 = Array.from({ length: 12 }, (_, i) => Math.max(0, input.generatedAngularHistogram12[i] ?? 0));
     const generatedGapCount = Math.max(0, Math.floor(input.generatedGapCount));
@@ -446,6 +476,12 @@ export class AtomStore {
       this.radialVariance !== radialVariance ||
       this.arcSpacingVariance !== arcSpacingVariance ||
       this.repeatScore !== repeatScore ||
+      this.ringContinuityRuns !== ringContinuityRuns ||
+      this.largestBlobArcRatio !== largestBlobArcRatio ||
+      this.dripCount !== dripCount ||
+      this.dripLengthMean !== dripLengthMean ||
+      this.whiskerCount !== whiskerCount ||
+      this.bgDarkDriftRate !== bgDarkDriftRate ||
       this.generatedRadialProfile.some((v, i) => v !== generatedRadialProfile[i]) ||
       this.generatedAngularHistogram12.some((v, i) => v !== generatedAngularHistogram12[i]) ||
       this.generatedGapCount !== generatedGapCount ||
@@ -480,6 +516,12 @@ export class AtomStore {
     this.radialVariance = radialVariance;
     this.arcSpacingVariance = arcSpacingVariance;
     this.repeatScore = repeatScore;
+    this.ringContinuityRuns = ringContinuityRuns;
+    this.largestBlobArcRatio = largestBlobArcRatio;
+    this.dripCount = dripCount;
+    this.dripLengthMean = dripLengthMean;
+    this.whiskerCount = whiskerCount;
+    this.bgDarkDriftRate = bgDarkDriftRate;
     this.generatedRadialProfile = generatedRadialProfile;
     this.generatedAngularHistogram12 = generatedAngularHistogram12;
     this.generatedGapCount = generatedGapCount;
@@ -916,6 +958,12 @@ export class AtomStore {
     this.radialVariance = 0;
     this.arcSpacingVariance = 0;
     this.repeatScore = 0;
+    this.ringContinuityRuns = 0;
+    this.largestBlobArcRatio = 0;
+    this.dripCount = 0;
+    this.dripLengthMean = 0;
+    this.whiskerCount = 0;
+    this.bgDarkDriftRate = 0;
     this.generatedRadialProfile = Array.from({ length: 24 }, () => 0);
     this.generatedAngularHistogram12 = Array.from({ length: 12 }, () => 0);
     this.generatedGapCount = 0;

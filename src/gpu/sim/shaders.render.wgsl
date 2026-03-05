@@ -122,9 +122,9 @@ fn fs_volume(in: VsOut) -> @location(0) vec4f {
   let cNeighbor = (cx1 + cx2 + cy1 + cy2) * 0.25;
   let pNeighbor = (px1 + px2 + py1 + py2) * 0.25;
   let pGrad = abs(px1 - px2) + abs(py1 - py2);
-  let edgeKeep = smoothstep(0.16, 0.02, pGrad);
-  var carrier = c0 * 0.992 + cNeighbor * 0.0009;
-  var pigment = mix(p0 * 0.965 + pNeighbor * 0.012, p0 * 0.997 + pNeighbor * 0.0025, edgeKeep);
+  let edgeKeep = smoothstep(0.2, 0.018, pGrad);
+  var carrier = c0 * 0.994 + cNeighbor * 0.00045;
+  var pigment = mix(p0 * 0.972 + pNeighbor * 0.009, p0 * 0.9985 + pNeighbor * 0.0015, edgeKeep);
 
   carrier = clamp(carrier * globals.fogDensity * 0.8, 0.0, 3.5);
   pigment = clamp(pigment, 0.0, 4.5);
@@ -140,13 +140,16 @@ fn fs_volume(in: VsOut) -> @location(0) vec4f {
   let n2 = fbm2(q2 - warp * 0.6, 2);
   let plumeField = n0 * 0.53 + n1 * 0.31 + n2 * 0.16;
   let wispy = smoothstep(-0.18, 0.42, plumeField);
-  let smokeAbsorb = wispy * (0.028 + 0.064 * smoothstep(0.6, 0.1, radial));
-  let atmosphericLift = (wispy - 0.5) * 0.032;
-  let depthLift = smoothstep(0.9, 0.22, radial) * 0.022;
+  let smokeAbsorb = wispy * (0.01 + 0.028 * smoothstep(0.6, 0.1, radial));
+  let atmosphericLift = (wispy - 0.5) * 0.038;
+  let depthLift = smoothstep(0.9, 0.22, radial) * 0.026;
 
-  let absorption = carrier * globals.carrierScattering * 0.34 + pigment * globals.pigmentAbsorption * 2.95 + smokeAbsorb;
+  let absorption = carrier * globals.carrierScattering * 0.18 + pigment * globals.pigmentAbsorption * 2.65 + smokeAbsorb;
   let transmittance = exp(-absorption);
-  var luminance = clamp((globals.fogBaseLuma + depthLift + atmosphericLift) * transmittance, 0.0, 1.0);
+  let fogBase = globals.fogBaseLuma + depthLift + atmosphericLift;
+  let pigmentMask = smoothstep(0.05, 0.22, pigment);
+  let floorLift = fogBase * 0.52 * (1.0 - pigmentMask);
+  var luminance = clamp(max(floorLift, fogBase * transmittance), 0.0, 1.0);
 
   luminance = (luminance - globals.fogBaseLuma) * globals.contrast + globals.fogBaseLuma;
   luminance = clamp(luminance, 0.0, 0.94);

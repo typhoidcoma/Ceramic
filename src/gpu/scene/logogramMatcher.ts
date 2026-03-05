@@ -1,6 +1,6 @@
 import type { Atom } from "../../data/types";
 import type { MatchedLogogram } from "../../data/types";
-import { getDictionaryByCanonical, getDictionaryEntries, normalizeDictionaryPhrase } from "../../data/logogramDictionary";
+import { getDictionaryByCanonical, getDictionaryByPhrase, getDictionaryEntries, normalizeDictionaryPhrase } from "../../data/logogramDictionary";
 import { hashStringU32 } from "../../data/types";
 
 function normalizeMessage(input: string): string {
@@ -32,7 +32,7 @@ function hashToHex8(value: number): string {
 
 const warned = new Set<string>();
 
-function warnOnce(reason: "invalid_key" | "dictionary_unavailable", detail: Record<string, unknown>): void {
+function warnOnce(reason: "invalid_key", detail: Record<string, unknown>): void {
   const key = `${reason}:${JSON.stringify(detail)}`;
   if (warned.has(key)) return;
   warned.add(key);
@@ -41,6 +41,10 @@ function warnOnce(reason: "invalid_key" | "dictionary_unavailable", detail: Reco
 
 function buildUnknownMatch(message: string, atomId: string): MatchedLogogram {
   const seed = hashStringU32(`${message}|${atomId}`);
+  return buildUnknownMatchFromSeed(seed);
+}
+
+function buildUnknownMatchFromSeed(seed: number, canonicalOverride?: string): MatchedLogogram {
   const ringBias = 0.58 + (((seed >>> 2) & 0xff) / 255) * 0.34;
   const gapBias = 0.14 + (((seed >>> 7) & 0xff) / 255) * 0.2;
   const tendrilBias = 0.28 + (((seed >>> 12) & 0xff) / 255) * 0.38;
@@ -50,7 +54,7 @@ function buildUnknownMatch(message: string, atomId: string): MatchedLogogram {
   const frayBias = 0.42 + (((seed >>> 5) & 0xff) / 255) * 0.26;
   return {
     source: "unknown",
-    canonicalKey: `unknown:${hashToHex8(seed)}`,
+    canonicalKey: canonicalOverride ?? `unknown:${hashToHex8(seed)}`,
     messageHash: hashToHex8(seed),
     segmentMask: (seed ^ (seed >>> 7)) & 0x0fff,
     style: {
@@ -68,6 +72,12 @@ function buildUnknownMatch(message: string, atomId: string): MatchedLogogram {
   };
 }
 
+function buildUnknownMatchFromCanonicalKey(canonicalKey: string, atomId: string): MatchedLogogram {
+  const suffix = canonicalKey.slice("unknown:".length);
+  const parsed = /^[0-9a-f]{8}$/i.test(suffix) ? Number.parseInt(suffix, 16) >>> 0 : hashStringU32(`${canonicalKey}|${atomId}`);
+  return buildUnknownMatchFromSeed(parsed, canonicalKey);
+}
+
 export function extractMessageText(atom: Atom): string {
   return extractPayloadMessage(atom.payload) ?? "";
 }
@@ -79,7 +89,7 @@ export function matchLogogramFromMessage(atom: Atom): MatchedLogogram {
   const payloadKey = extractPayloadCanonicalKey(atom.payload);
   if (payloadKey) {
     if (isUnknownCanonicalKey(payloadKey)) {
-      return buildUnknownMatch(normalized || atom.id, atom.id);
+      return buildUnknownMatchFromCanonicalKey(payloadKey, atom.id);
     }
     const entry = canonicalMap.get(payloadKey);
     if (entry) {
@@ -99,20 +109,23 @@ export function matchLogogramFromMessage(atom: Atom): MatchedLogogram {
   }
   if (!normalized) return buildUnknownMatch("", atom.id);
 
-  const entries = getDictionaryEntries();
-  if (entries.length === 0) {
-    warnOnce("dictionary_unavailable", { atomId: atom.id });
-    return buildUnknownMatch(normalized, atom.id);
+  const phraseMap = getDictionaryByPhrase();
+  const phraseExact = phraseMap.get(normalized);
+  if (phraseExact) {
+    const hash = hashToHex8(hashStringU32(normalized));
+    return {
+      source: "dictionary",
+      canonicalKey: phraseExact.canonicalKey,
+      entryId: phraseExact.id,
+      matchedPhrase: phraseExact.phrase,
+      messageHash: hash,
+      segmentMask: phraseExact.segmentMask & 0x0fff,
+      style: phraseExact.style,
+    };
   }
-  let exact:
-    | {
-        phrase: string;
-        canonicalKey: string;
-        id: string;
-        segmentMask: number;
-        style: Record<string, unknown>;
-      }
-    | undefined;
+
+  const entries = getDictionaryEntries();
+  if (entries.length === 0) return buildUnknownMatch(normalized, atom.id);
   let bestSubstring:
     | {
         phrase: string;
@@ -126,16 +139,7 @@ export function matchLogogramFromMessage(atom: Atom): MatchedLogogram {
   for (const entry of entries) {
     const phrase = normalizeMessage(entry.phrase);
     if (!phrase) continue;
-    if (phrase === normalized) {
-      exact = {
-        phrase,
-        canonicalKey: entry.canonicalKey,
-        id: entry.id,
-        segmentMask: entry.segmentMask,
-        style: entry.style,
-      };
-      break;
-    }
+    if (phrase === normalized) continue;
     if (!normalized.includes(phrase)) continue;
     if (!bestSubstring) {
       bestSubstring = {
@@ -161,7 +165,7 @@ export function matchLogogramFromMessage(atom: Atom): MatchedLogogram {
     }
   }
 
-  const best = exact ?? bestSubstring;
+  const best = bestSubstring;
   if (!best) return buildUnknownMatch(normalized, atom.id);
   const hash = hashToHex8(hashStringU32(normalized));
   return {

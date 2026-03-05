@@ -68,9 +68,33 @@ export type LogogramStyle = {
   tendril_count_bias?: number;
   tendril_length_bias?: number;
   arc_dropout_bias?: number;
+  ring_circle_count_bias?: number;
+  ring_circle_thickness_bias?: number;
+  ring_center_variation_bias?: number;
+  ring_disk_count_bias?: number;
+  ring_disk_radius_bias?: number;
+  blob_arc_extent_bias?: number;
+  blob_disk_count_bias?: number;
+  blob_disk_radius_bias?: number;
+  tendril_primary_count_bias?: number;
+  tendril_primary_length_bias?: number;
+  tendril_whisker_count_bias?: number;
+  tendril_noise_exp_bias?: number;
+  gap_count_bias?: number;
+  gap_span_bias?: number;
   curvatureBias?: number;
   thicknessBias?: number;
   hookBias?: number;
+};
+
+export type LogogramMorphologyProfile = {
+  id: string;
+  ringWeight: number;
+  blobDominance: number;
+  tendrilMode: "drip_sparse_whisker" | "spike_many" | "minimal";
+  gapCountBias: number;
+  gapSpanBias: number;
+  style: Partial<LogogramStyle>;
 };
 
 export type MatchedLogogram = {

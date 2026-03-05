@@ -26,6 +26,7 @@ export function App() {
   const [llmBusy, setLlmBusy] = useState(false);
   const [llmStatus, setLlmStatus] = useState<string | null>(null);
   const [incomingPrompt, setIncomingPrompt] = useState("Summarize intent: we arrive with open hands.");
+  const [maskPipelineOn, setMaskPipelineOn] = useState((import.meta.env.VITE_LOGOGRAM_V2_MASK_PIPELINE ?? "1") !== "0");
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -123,6 +124,16 @@ export function App() {
           {llmBusy ? "Generating..." : "Generate"}
         </button>
         <button className="chip" onClick={() => rendererRef.current?.resetView()}>Reset View</button>
+        <button
+          className="chip"
+          onClick={() => {
+            const next = !maskPipelineOn;
+            setMaskPipelineOn(next);
+            rendererRef.current?.setMaskPipelineEnabled(next);
+          }}
+        >
+          {maskPipelineOn ? "Pipeline v2" : "Pipeline v1"}
+        </button>
       </div>
 
       <div className="diagnostics">
@@ -156,6 +167,12 @@ export function App() {
         <span>radVar {snapshot.radialVariance.toFixed(5)}</span>
         <span>arcVar {snapshot.arcSpacingVariance.toFixed(5)}</span>
         <span>repeat {snapshot.repeatScore.toFixed(3)}</span>
+        <span>contRuns {snapshot.ringContinuityRuns}</span>
+        <span>blobArc {snapshot.largestBlobArcRatio.toFixed(2)}</span>
+        <span>drips {snapshot.dripCount}</span>
+        <span>dripLen {snapshot.dripLengthMean.toFixed(4)}</span>
+        <span>whiskers {snapshot.whiskerCount}</span>
+        <span>bgDrift {snapshot.bgDarkDriftRate.toFixed(4)}</span>
         <span>bench off_by_plan</span>
         <span>fpsMin2s {snapshot.benchmarkFpsWindowMin.toFixed(1)}</span>
         <span>fpsGuard45 {snapshot.fpsGuardrailPass ? "pass" : "fail"}</span>
@@ -174,7 +191,9 @@ export function App() {
         {snapshot.constraintViolationCount > 0 && <span className="error">warning: solver constraints violated</span>}
         {snapshot.innerVoidRatio < 0.35 && <span className="error">warning: inner void collapsed</span>}
         {snapshot.centerMassRatio > 0.22 && <span className="error">warning: center mass too high</span>}
-        {snapshot.repeatScore > 0.24 && <span className="error">warning: texture repetition risk</span>}
+        {snapshot.sweepProgress >= 0.85 && snapshot.repeatScore > 0.29 && <span className="error">warning: texture repetition risk</span>}
+        {snapshot.sweepProgress >= 0.85 && snapshot.ringContinuityRuns > 3 && <span className="error">warning: ring broken into many runs</span>}
+        {snapshot.sweepProgress >= 0.85 && snapshot.bgDarkDriftRate > 0.003 && <span className="error">warning: background dark drift</span>}
         {syncError && <span className="error">sync error: {syncError}</span>}
         {llmStatus && <span>{llmStatus}</span>}
       </div>

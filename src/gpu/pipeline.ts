@@ -31,6 +31,10 @@ export function createPipelineBundle(device: GPUDevice, format: GPUTextureFormat
       { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
       { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
       { binding: 10, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+      { binding: 11, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 12, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 13, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 14, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
     ],
   });
 

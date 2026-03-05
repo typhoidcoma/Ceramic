@@ -42,6 +42,12 @@ type TaskFieldStats = {
   radialVariance: number;
   arcSpacingVariance: number;
   repeatScore: number;
+  ringContinuityRuns: number;
+  largestBlobArcRatio: number;
+  dripCount: number;
+  dripLengthMean: number;
+  whiskerCount: number;
+  bgDarkDriftRate: number;
   generatedRadialProfile: number[];
   generatedAngularHistogram12: number[];
   generatedGapCount: number;
@@ -79,6 +85,12 @@ let lastStats: TaskFieldStats = {
   radialVariance: 0,
   arcSpacingVariance: 0,
   repeatScore: 0,
+  ringContinuityRuns: 0,
+  largestBlobArcRatio: 0,
+  dripCount: 0,
+  dripLengthMean: 0,
+  whiskerCount: 0,
+  bgDarkDriftRate: 0,
   generatedRadialProfile: Array.from({ length: 24 }, () => 0),
   generatedAngularHistogram12: Array.from({ length: 12 }, () => 0),
   generatedGapCount: 0,
@@ -100,6 +112,11 @@ let frameRadialBins = Array.from({ length: 24 }, () => 0);
 let frameStrokeWidthSum = 0;
 let frameStrokeWidthSumSq = 0;
 let frameStrokeWidthCount = 0;
+let frameBlobSectorCounts = Array.from({ length: 12 }, () => 0);
+let frameDripCount = 0;
+let frameWhiskerCount = 0;
+let frameDripLengthAccum = 0;
+let frameDripLengthCount = 0;
 
 function clamp01(value: number): number {
   if (value <= 0) return 0;
@@ -132,8 +149,8 @@ function computeBounds(atoms: Atom[]): Bounds {
   return { minX, maxX, minY, maxY, minZ, maxZ };
 }
 
-const ACTIVE_SAMPLE_BUDGET = Math.min(2200, BENCH_MAX_ACTIVE_POINTS);
-const PREV_SAMPLE_BUDGET = Math.min(1100, BENCH_MAX_PREV_POINTS);
+const ACTIVE_SAMPLE_BUDGET = Math.min(2600, BENCH_MAX_ACTIVE_POINTS);
+const PREV_SAMPLE_BUDGET = Math.min(1300, BENCH_MAX_PREV_POINTS);
 const MAX_LOGOGRAM_CACHE = 256;
 const RING_BAND_MIN_RADIUS_NORM = 0.18;
 const RING_BAND_MAX_RADIUS_NORM = 0.38;
@@ -205,7 +222,7 @@ function pushAtomPoints(
   // Keep point density high even during blends so the logogram stays structured, not sparse.
   const densityFloor = 0.76;
   const effectiveSampleWeight = densityFloor + (1 - densityFloor) * weight;
-  const minSamples = Math.min(budget, 120);
+  const minSamples = Math.min(budget, 220);
   const targetSamples = Math.min(remaining, Math.max(minSamples, Math.floor(budget * effectiveSampleWeight)));
   const descriptor = generateLogogramFromMatch(atom, match);
   const symbolPoints = getCachedSymbolPoints(
@@ -273,21 +290,23 @@ function pushAtomPoints(
     const tx = next.x - prev.x;
     const ty = next.y - prev.y;
     const tLen = Math.hypot(tx, ty) || 1;
-    const reveal = clamp01((sweepProgress - sp.phase + 0.2) / 0.2);
-    if (reveal <= 0) continue;
-    const injectorStrength = injectorStrengthBase * (0.82 + 0.18 * reveal);
-    const depositionRate = depositionRateBase * (0.74 + 0.26 * reveal);
     const isRing = sp.channel === "ring";
     const isBlob = sp.channel === "blob";
     const isTendril = sp.channel === "tendril";
-    const channelScale = isRing ? 1.0 : isBlob ? 1.16 : 0.78;
+    const perceivedSweep = clamp01(sweepProgress + (1 - sweepProgress) * 0.32);
+    const phaseLead = isRing ? 0.17 : isBlob ? 0.22 : 0.02;
+    const reveal = clamp01((perceivedSweep - (sp.phase - phaseLead) + 0.26) / 0.26);
+    if (reveal <= 0) continue;
+    const injectorStrength = injectorStrengthBase * (0.82 + 0.18 * reveal);
+    const depositionRate = depositionRateBase * (0.74 + 0.26 * reveal);
+    const channelScale = isRing ? 1.0 : isBlob ? 1.12 : 0.78;
     const anisotropy = isRing
       ? clamp01(0.1 + 0.12 * sp.mass)
       : isBlob
         ? clamp01(0.04 + 0.06 * sp.mass)
         : clamp01(0.22 + 0.18 * sp.mass);
     const pigmentBias = clamp01((0.34 + 0.66 * (sp.thickness / 1.3)) * dictionaryBoost * impulseBoost * channelScale);
-    const radiusScale = isRing ? 0.5 : isBlob ? 0.74 : 0.44;
+    const radiusScale = isRing ? 0.58 : isBlob ? 0.82 : 0.5;
     const ox = sp.x * glyphScale;
     const oy = sp.y * glyphScale * 0.96;
     const radial = Math.hypot(ox, oy);
@@ -323,17 +342,20 @@ function pushAtomPoints(
       // Keep legacy `hook` counter populated for existing diagnostics compatibility.
       lastStats.channelCounts.hook += 1;
       lastStats.maskPointCountBlob += 1;
+      frameBlobSectorCounts[sector] += 1;
     } else if (isTendril) {
       lastStats.channelCounts.tendril += 1;
       lastStats.maskPointCountTendril += 1;
+      if (sp.thickness >= 0.22) frameDripCount += 1;
+      else frameWhiskerCount += 1;
     }
     const basePoint: TaskPoint = {
       nx: jitteredNx,
       ny: jitteredNy,
       nz: clamp01(centerZ + sp.y * 0.02),
-      radius: baseRadius * (0.18 + sp.thickness * (0.14 + sp.mass * 0.1)) * emphasis * radiusScale * (0.78 + reveal * 0.22),
+      radius: baseRadius * (0.22 + sp.thickness * (0.16 + sp.mass * 0.1)) * emphasis * radiusScale * (0.78 + reveal * 0.22),
       urgency: injectorStrength,
-      importance: depositionRate * (isBlob ? 1.14 : isTendril ? 0.7 : 0.9) * (centerClamp ? 0.9 : 1),
+      importance: depositionRate * (isBlob ? 1.08 : isTendril ? 0.68 : 0.9) * (centerClamp ? 0.9 : 1),
       selected,
       hovered,
       dirX,
@@ -341,7 +363,7 @@ function pushAtomPoints(
       coherence: clamp01(anisotropy * (0.52 + 0.22 * sp.mass)),
       ink:
         pigmentBias *
-        (isBlob ? 1.08 + sp.mass * 0.62 : isTendril ? 0.42 + sp.mass * 0.26 : 0.52 + sp.mass * 0.2) *
+        (isBlob ? 0.98 + sp.mass * 0.5 : isTendril ? 0.38 + sp.mass * 0.2 : 0.48 + sp.mass * 0.2) *
         (0.84 + 0.16 * reveal) *
         (1 - centerPenalty * 0.5),
     };
@@ -378,6 +400,10 @@ function pushAtomPoints(
       frameArcGapSum += gap;
       frameArcGapSumSq += gap * gap;
       frameArcGapCount += 1;
+      if (isTendril && prevSp.channel === "tendril" && sp.thickness >= 0.22) {
+        frameDripLengthAccum += gap;
+        frameDripLengthCount += 1;
+      }
     }
     if (radial >= ringBandMinRadiusNorm && radial <= ringBandMaxRadiusNorm) frameRingBandCount += 1;
     if (radial < CENTER_VOID_RADIUS_NORM) frameCenterMassCount += 1;
@@ -423,6 +449,12 @@ export function buildTaskFieldPointsSingleActive(
     radialVariance: 0,
     arcSpacingVariance: 0,
     repeatScore: 0,
+    ringContinuityRuns: 0,
+    largestBlobArcRatio: 0,
+    dripCount: 0,
+    dripLengthMean: 0,
+    whiskerCount: 0,
+    bgDarkDriftRate: 0,
     generatedRadialProfile: Array.from({ length: 24 }, () => 0),
     generatedAngularHistogram12: Array.from({ length: 12 }, () => 0),
     generatedGapCount: 0,
@@ -444,6 +476,11 @@ export function buildTaskFieldPointsSingleActive(
   frameStrokeWidthSum = 0;
   frameStrokeWidthSumSq = 0;
   frameStrokeWidthCount = 0;
+  frameBlobSectorCounts = Array.from({ length: 12 }, () => 0);
+  frameDripCount = 0;
+  frameWhiskerCount = 0;
+  frameDripLengthAccum = 0;
+  frameDripLengthCount = 0;
   const points: TaskPoint[] = [];
   if (atoms.length === 0) return points;
 
@@ -511,14 +548,18 @@ export function buildTaskFieldPointsSingleActive(
       lastStats.textureEntropy = -m * Math.log2(Math.max(1e-6, m)) - (1 - m) * Math.log2(Math.max(1e-6, 1 - m));
     }
     const occupancyNorm = clamp01(occupiedSectors / Math.max(1, expectedActiveSectors));
-    const entropyPenalty = clamp01((0.9 - Math.min(1, lastStats.textureEntropy)) / 0.4);
-    const radialPenalty = clamp01((0.00004 - lastStats.radialVariance) / 0.00004);
-    const arcPenalty = clamp01((0.0003 - lastStats.arcSpacingVariance) / 0.0003);
+    const entropyPenalty = clamp01((0.86 - Math.min(1, lastStats.textureEntropy)) / 0.44);
+    const radialPenalty = clamp01((0.000032 - lastStats.radialVariance) / 0.000032);
+    const arcPenalty = clamp01((0.00022 - lastStats.arcSpacingVariance) / 0.00022);
+    const continuityRelief = clamp01((lastStats.ringContinuityScore - 0.66) / 0.3);
+    const frayDensityNow = clamp01((lastStats.channelCounts.tendril + lastStats.channelCounts.hook) / Math.max(1, lastStats.channelCounts.ring));
     lastStats.repeatScore = clamp01(
-      0.38 * entropyPenalty +
-      0.14 * radialPenalty +
-      0.22 * arcPenalty +
-      0.26 * (1 - occupancyNorm),
+      0.34 * entropyPenalty +
+      0.12 * radialPenalty +
+      0.2 * arcPenalty +
+      0.22 * (1 - occupancyNorm) +
+      0.12 * (1 - clamp01(frayDensityNow / 0.42)) -
+      0.14 * continuityRelief,
     );
     const radialTotal = frameRadialBins.reduce((acc, v) => acc + v, 0);
     lastStats.generatedRadialProfile = radialTotal > 0 ? frameRadialBins.map((v) => v / radialTotal) : Array.from({ length: 24 }, () => 0);
@@ -532,7 +573,20 @@ export function buildTaskFieldPointsSingleActive(
       if (cur === 0 && prev === 1) gapCount += 1;
     }
     lastStats.generatedGapCount = gapCount;
-    lastStats.generatedFrayDensity = clamp01((lastStats.channelCounts.tendril + lastStats.channelCounts.hook) / Math.max(1, lastStats.channelCounts.ring));
+    lastStats.generatedFrayDensity = frayDensityNow;
+    let runs = 0;
+    for (let i = 0; i < 12; i += 1) {
+      const cur = lastStats.ringSectorOccupancy[i] > 1 ? 1 : 0;
+      const prev = lastStats.ringSectorOccupancy[(i + 11) % 12] > 1 ? 1 : 0;
+      if (cur === 1 && prev === 0) runs += 1;
+    }
+    lastStats.ringContinuityRuns = runs;
+    const blobTotal = frameBlobSectorCounts.reduce((acc, v) => acc + v, 0);
+    const blobMax = frameBlobSectorCounts.reduce((acc, v) => Math.max(acc, v), 0);
+    lastStats.largestBlobArcRatio = blobTotal > 0 ? clamp01(blobMax / blobTotal) : 0;
+    lastStats.dripCount = frameDripCount;
+    lastStats.whiskerCount = frameWhiskerCount;
+    lastStats.dripLengthMean = frameDripLengthCount > 0 ? frameDripLengthAccum / frameDripLengthCount : 0;
     if (frameStrokeWidthCount > 0) {
       const wMean = frameStrokeWidthSum / frameStrokeWidthCount;
       lastStats.generatedStrokeWidthMean = wMean;
