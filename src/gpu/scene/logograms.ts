@@ -486,7 +486,7 @@ function buildProceduralMaskSpec(logogram: LogogramDescriptor, sampleBudget: num
     theta: angleForSector(sector) + (Math.PI / 12) * (0.25 + rnd() * 0.5),
     arcSpan: 0.08 + grammar.procedural.blobArcExtentBias * 0.28 + rnd() * 0.12,
     radialBias: -0.12 + rnd() * 0.34,
-    diskCount: 14 + Math.floor(grammar.procedural.blobDiskCountBias * 34) + Math.floor(rnd() * 16),
+    diskCount: 8 + Math.floor(grammar.procedural.blobDiskCountBias * 20) + Math.floor(rnd() * 10),
     diskRadiusMin: 0.006 + rnd() * (0.004 + grammar.procedural.blobDiskRadiusBias * 0.01),
     diskRadiusMax: 0.015 + grammar.procedural.blobDiskRadiusBias * 0.046 + rnd() * 0.024,
   }));
@@ -495,7 +495,7 @@ function buildProceduralMaskSpec(logogram: LogogramDescriptor, sampleBudget: num
       theta: angleForSector(sector) + (Math.PI / 12) * (0.2 + rnd() * 0.6),
       arcSpan: 0.06 + grammar.procedural.blobArcExtentBias * 0.14 + rnd() * 0.08,
       radialBias: -0.08 + rnd() * 0.22,
-      diskCount: 6 + Math.floor(grammar.procedural.blobDiskCountBias * 16) + Math.floor(rnd() * 10),
+      diskCount: 4 + Math.floor(grammar.procedural.blobDiskCountBias * 10) + Math.floor(rnd() * 6),
       diskRadiusMin: 0.006 + rnd() * 0.006,
       diskRadiusMax: 0.013 + grammar.procedural.massBias * 0.02 + rnd() * 0.012,
     });
@@ -508,7 +508,7 @@ function buildProceduralMaskSpec(logogram: LogogramDescriptor, sampleBudget: num
   }
   const tendrilSpecs: ProceduralMaskSpec["tendrilSpecs"] = tendrilAnchors.map((sector) => ({
     theta: angleForSector(sector) + (Math.PI / 12) * (0.2 + rnd() * 0.6),
-    count: 1 + Math.floor(grammar.procedural.tendrilPrimaryCountBias * 2) + Math.floor(rnd() * 2),
+    count: 1 + Math.floor(grammar.procedural.tendrilPrimaryCountBias * 1.2) + Math.floor(rnd() * 1),
     lengthMin: 6 + Math.floor(grammar.procedural.tendrilPrimaryLengthBias * 10) + Math.floor(rnd() * 4),
     lengthMax: 12 + Math.floor(grammar.procedural.tendrilPrimaryLengthBias * 18) + Math.floor(rnd() * 6),
     curlMin: 0.03 + rnd() * 0.05,
@@ -572,8 +572,8 @@ function blueNoiseCompact(points: LogogramPoint[], budget: number): LogogramPoin
   const blob = points.filter((p) => p.channel === "blob");
   const tendril = points.filter((p) => p.channel === "tendril");
 
-  const blobTarget = blob.length > 0 ? Math.max(26, Math.floor(target * 0.28)) : 0;
-  const tendrilTarget = tendril.length > 0 ? Math.max(10, Math.floor(target * 0.1)) : 0;
+  const blobTarget = blob.length > 0 ? Math.max(14, Math.floor(target * 0.12)) : 0;
+  const tendrilTarget = tendril.length > 0 ? Math.max(8, Math.floor(target * 0.08)) : 0;
   const ringTarget = Math.max(1, target - blobTarget - tendrilTarget);
 
   const picked = [
@@ -646,19 +646,33 @@ function sampleFromRaster(raster: ProceduralMaskRaster, budget: number, seed: nu
   const out: LogogramPoint[] = [];
   const { width, height } = raster;
   const total = width * height;
-  const candidates: Array<{ i: number; w: number; channel: "ring" | "blob" | "tendril" }> = [];
+  const ringCandidates: Array<{ i: number; w: number; channel: "ring" }> = [];
+  const blobCandidates: Array<{ i: number; w: number; channel: "blob" }> = [];
+  const tendrilCandidates: Array<{ i: number; w: number; channel: "tendril" }> = [];
   for (let i = 0; i < total; i += 1) {
     const r = raster.ringDensity[i];
     const b = raster.blobDensity[i];
     const t = raster.tendrilDensity[i];
-    if (r > 0.01) candidates.push({ i, w: r, channel: "ring" });
-    if (b > 0.01) candidates.push({ i, w: b * 1.1, channel: "blob" });
-    if (t > 0.01) candidates.push({ i, w: t * 0.9, channel: "tendril" });
+    if (r > 0.006) ringCandidates.push({ i, w: r * 1.3, channel: "ring" });
+    if (b > 0.03) blobCandidates.push({ i, w: b * 0.28, channel: "blob" });
+    if (t > 0.03) tendrilCandidates.push({ i, w: t * 0.62, channel: "tendril" });
   }
-  candidates.sort((a, b) => b.w - a.w);
-  const take = Math.min(budget, candidates.length);
+  ringCandidates.sort((a, b) => b.w - a.w);
+  blobCandidates.sort((a, b) => b.w - a.w);
+  tendrilCandidates.sort((a, b) => b.w - a.w);
+
+  const ringTake = Math.min(Math.floor(budget * 0.68), ringCandidates.length);
+  const blobTake = Math.min(Math.floor(budget * 0.24), blobCandidates.length);
+  const tendrilTake = Math.min(Math.max(6, budget - ringTake - blobTake), tendrilCandidates.length);
+  const picked = [
+    ...ringCandidates.slice(0, ringTake),
+    ...blobCandidates.slice(0, blobTake),
+    ...tendrilCandidates.slice(0, tendrilTake),
+  ];
+  picked.sort((a, b) => b.w - a.w);
+  const take = Math.min(budget, picked.length);
   for (let n = 0; n < take; n += 1) {
-    const c = candidates[n];
+    const c = picked[n];
     const x = c.i % width;
     const y = Math.floor(c.i / width);
     const nx = x / Math.max(1, width - 1) * 2 - 1;
@@ -666,7 +680,7 @@ function sampleFromRaster(raster: ProceduralMaskRaster, budget: number, seed: nu
     const fx = raster.flowX[c.i];
     const fy = raster.flowY[c.i];
     const flowMag = Math.hypot(fx, fy);
-    const thickness = clamp01(0.1 + c.w * 0.45);
+    const thickness = clamp01((c.channel === "ring" ? 0.16 : c.channel === "blob" ? 0.2 : 0.22) + c.w * 0.4);
     out.push({
       x: nx + (rnd() - 0.5) * 0.006,
       y: ny + (rnd() - 0.5) * 0.006,
@@ -900,8 +914,8 @@ export function sampleLogogram(logogram: LogogramDescriptor, sampleBudget: numbe
           {
             x,
             y,
-            mass: clamp01(0.14 + (1 - u) * 0.2 + rnd() * 0.08),
-            width: clamp01(0.14 + (1 - u) * 0.16),
+            mass: clamp01(0.22 + (1 - u) * 0.26 + rnd() * 0.1),
+            width: clamp01(0.24 + (1 - u) * 0.2),
             channel: "tendril",
             phase: clamp01(0.28 + u * 0.52),
             flowBias: 0.42 + 0.26 * (1 - u),

@@ -140,15 +140,15 @@ fn fs_volume(in: VsOut) -> @location(0) vec4f {
   let n2 = fbm2(q2 - warp * 0.6, 2);
   let plumeField = n0 * 0.53 + n1 * 0.31 + n2 * 0.16;
   let wispy = smoothstep(-0.18, 0.42, plumeField);
-  let smokeAbsorb = wispy * (0.01 + 0.028 * smoothstep(0.6, 0.1, radial));
-  let atmosphericLift = (wispy - 0.5) * 0.038;
-  let depthLift = smoothstep(0.9, 0.22, radial) * 0.026;
+  let smokeAbsorb = wispy * (0.006 + 0.02 * smoothstep(0.6, 0.1, radial));
+  let atmosphericLift = (wispy - 0.5) * 0.044;
+  let depthLift = smoothstep(0.9, 0.22, radial) * 0.032;
 
-  let absorption = carrier * globals.carrierScattering * 0.18 + pigment * globals.pigmentAbsorption * 2.65 + smokeAbsorb;
+  let absorption = carrier * globals.carrierScattering * 0.18 + pigment * globals.pigmentAbsorption * 3.35 + smokeAbsorb;
   let transmittance = exp(-absorption);
   let fogBase = globals.fogBaseLuma + depthLift + atmosphericLift;
   let pigmentMask = smoothstep(0.05, 0.22, pigment);
-  let floorLift = fogBase * 0.52 * (1.0 - pigmentMask);
+  let floorLift = fogBase * 0.2 * (1.0 - pigmentMask);
   var luminance = clamp(max(floorLift, fogBase * transmittance), 0.0, 1.0);
 
   luminance = (luminance - globals.fogBaseLuma) * globals.contrast + globals.fogBaseLuma;

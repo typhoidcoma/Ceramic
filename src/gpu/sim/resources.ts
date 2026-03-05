@@ -11,10 +11,6 @@ export type SimulationResources = {
   pressureRead: GPUBuffer;
   pressureWrite: GPUBuffer;
   divergence: GPUBuffer;
-  maskRing: GPUBuffer;
-  maskBlob: GPUBuffer;
-  maskTendril: GPUBuffer;
-  maskFlow: GPUBuffer;
 };
 
 function createStorageBuffer(device: GPUDevice, label: string, size: number): GPUBuffer {
@@ -43,10 +39,6 @@ export function createSimulationResources(device: GPUDevice, simWidth: number, s
     pressureRead: createStorageBuffer(device, "pressure-read", scalarSize),
     pressureWrite: createStorageBuffer(device, "pressure-write", scalarSize),
     divergence: createStorageBuffer(device, "divergence", scalarSize),
-    maskRing: createStorageBuffer(device, "mask-ring", scalarSize),
-    maskBlob: createStorageBuffer(device, "mask-blob", scalarSize),
-    maskTendril: createStorageBuffer(device, "mask-tendril", scalarSize),
-    maskFlow: createStorageBuffer(device, "mask-flow", vec2Size),
   };
 }
 

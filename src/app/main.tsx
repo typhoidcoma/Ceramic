@@ -26,7 +26,6 @@ export function App() {
   const [llmBusy, setLlmBusy] = useState(false);
   const [llmStatus, setLlmStatus] = useState<string | null>(null);
   const [incomingPrompt, setIncomingPrompt] = useState("Summarize intent: we arrive with open hands.");
-  const [maskPipelineOn, setMaskPipelineOn] = useState((import.meta.env.VITE_LOGOGRAM_V2_MASK_PIPELINE ?? "1") !== "0");
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -124,16 +123,6 @@ export function App() {
           {llmBusy ? "Generating..." : "Generate"}
         </button>
         <button className="chip" onClick={() => rendererRef.current?.resetView()}>Reset View</button>
-        <button
-          className="chip"
-          onClick={() => {
-            const next = !maskPipelineOn;
-            setMaskPipelineOn(next);
-            rendererRef.current?.setMaskPipelineEnabled(next);
-          }}
-        >
-          {maskPipelineOn ? "Pipeline v2" : "Pipeline v1"}
-        </button>
       </div>
 
       <div className="diagnostics">

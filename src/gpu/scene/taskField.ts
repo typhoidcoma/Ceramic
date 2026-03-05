@@ -299,14 +299,14 @@ function pushAtomPoints(
     if (reveal <= 0) continue;
     const injectorStrength = injectorStrengthBase * (0.82 + 0.18 * reveal);
     const depositionRate = depositionRateBase * (0.74 + 0.26 * reveal);
-    const channelScale = isRing ? 1.0 : isBlob ? 1.12 : 0.78;
+    const channelScale = isRing ? 1.22 : isBlob ? 0.88 : 0.72;
     const anisotropy = isRing
-      ? clamp01(0.1 + 0.12 * sp.mass)
+      ? clamp01(0.48 + 0.26 * sp.mass)
       : isBlob
         ? clamp01(0.04 + 0.06 * sp.mass)
         : clamp01(0.22 + 0.18 * sp.mass);
     const pigmentBias = clamp01((0.34 + 0.66 * (sp.thickness / 1.3)) * dictionaryBoost * impulseBoost * channelScale);
-    const radiusScale = isRing ? 0.58 : isBlob ? 0.82 : 0.5;
+    const radiusScale = isRing ? 0.68 : isBlob ? 0.72 : 0.44;
     const ox = sp.x * glyphScale;
     const oy = sp.y * glyphScale * 0.96;
     const radial = Math.hypot(ox, oy);
@@ -353,17 +353,17 @@ function pushAtomPoints(
       nx: jitteredNx,
       ny: jitteredNy,
       nz: clamp01(centerZ + sp.y * 0.02),
-      radius: baseRadius * (0.22 + sp.thickness * (0.16 + sp.mass * 0.1)) * emphasis * radiusScale * (0.78 + reveal * 0.22),
+      radius: baseRadius * (0.24 + sp.thickness * (0.2 + sp.mass * 0.12)) * emphasis * radiusScale * (0.78 + reveal * 0.22),
       urgency: injectorStrength,
-      importance: depositionRate * (isBlob ? 1.08 : isTendril ? 0.68 : 0.9) * (centerClamp ? 0.9 : 1),
+      importance: depositionRate * (isBlob ? 0.82 : isTendril ? 0.58 : 1.12) * (centerClamp ? 0.9 : 1),
       selected,
       hovered,
       dirX,
       dirY,
-      coherence: clamp01(anisotropy * (0.52 + 0.22 * sp.mass)),
+      coherence: isRing ? clamp01(0.58 + 0.24 * sp.mass) : clamp01(anisotropy * (0.5 + 0.2 * sp.mass)),
       ink:
         pigmentBias *
-        (isBlob ? 0.98 + sp.mass * 0.5 : isTendril ? 0.38 + sp.mass * 0.2 : 0.48 + sp.mass * 0.2) *
+        (isBlob ? 0.68 + sp.mass * 0.32 : isTendril ? 0.3 + sp.mass * 0.14 : 0.68 + sp.mass * 0.34) *
         (0.84 + 0.16 * reveal) *
         (1 - centerPenalty * 0.5),
     };

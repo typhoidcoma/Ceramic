@@ -49,10 +49,6 @@ export function createSimulationSystem(
       { binding: 8, resource: { buffer: resources.pressureWrite } },
       { binding: 9, resource: { buffer: resources.divergence } },
       { binding: 10, resource: { buffer: taskBuffer } },
-      { binding: 11, resource: { buffer: resources.maskRing } },
-      { binding: 12, resource: { buffer: resources.maskBlob } },
-      { binding: 13, resource: { buffer: resources.maskTendril } },
-      { binding: 14, resource: { buffer: resources.maskFlow } },
     ],
   });
 
@@ -88,7 +84,6 @@ function dispatchAll(
     width: system.resources.simWidth,
     height: system.resources.simHeight,
   };
-  runInjectionPass(ctx, pipelines.injection);
   runVelocityPass(ctx, pipelines.velocity);
   runAdvectionPass(ctx, pipelines.advection);
   runDivergencePass(ctx, pipelines.divergence);
@@ -97,6 +92,7 @@ function dispatchAll(
   }
   runProjectionPass(ctx, pipelines.projection);
   runDampPass(ctx, pipelines.damp);
+  runInjectionPass(ctx, pipelines.injection);
 }
 
 export function runSimulationStep(

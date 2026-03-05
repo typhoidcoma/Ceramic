@@ -39,10 +39,10 @@ export const BENCH_MAX_PREV_POINTS = 900;
 
 export const INK_FLUID_PROFILE = {
   fogDensity: 0.88,
-  contrast: 1.14,
+  contrast: 1.08,
   grainAmount: 0.01,
-  fogBaseLuma: 0.72,
-  pigmentAbsorption: 2.24,
+  fogBaseLuma: 0.62,
+  pigmentAbsorption: 2.7,
   carrierScattering: 0.12,
   inkRetention: 0.988,
   compositeMode: "subtractive_ink_v2",

@@ -38,10 +38,6 @@ struct TaskPoint {
 @group(0) @binding(8) var<storage, read_write> pressureWrite : array<f32>;
 @group(0) @binding(9) var<storage, read_write> divergence : array<f32>;
 @group(0) @binding(10) var<storage, read> tasks : array<TaskPoint>;
-@group(0) @binding(11) var<storage, read> maskRing : array<f32>;
-@group(0) @binding(12) var<storage, read> maskBlob : array<f32>;
-@group(0) @binding(13) var<storage, read> maskTendril : array<f32>;
-@group(0) @binding(14) var<storage, read> maskFlow : array<vec2f>;
 
 fn dims() -> vec2u {
   return vec2u(u32(max(1.0, globals.simWidth)), u32(max(1.0, globals.simHeight)));
@@ -141,17 +137,6 @@ fn inject_main(@builtin(global_invocation_id) gid: vec3u) {
   var carrier = carrierWrite[idx] * 0.9968;
   var pigment = pigmentWrite[idx] * clamp(globals.inkRetention, 0.9, 0.9999);
   var velocity = velocityWrite[idx] * 0.992;
-
-  // Pre-fluid procedural mask compositing stage.
-  let mr = max(0.0, maskRing[idx]);
-  let mb = max(0.0, maskBlob[idx]);
-  let mt = max(0.0, maskTendril[idx]);
-  let mf = maskFlow[idx];
-  let maskInk = (mr * 0.7 + mb * 1.18 + mt * 0.46) * globals.fogDensity;
-  let maskCarrier = (mr * 0.0022 + mb * 0.0012 + mt * 0.0016);
-  pigment = min(4.6, pigment + maskInk * 0.055);
-  carrier = min(3.0, carrier + maskCarrier);
-  velocity += mf * (0.00055 + clamp(maskInk, 0.0, 1.0) * 0.00095);
 
   let count = u32(globals.taskCount);
   for (var i = 0u; i < count; i = i + 1u) {
