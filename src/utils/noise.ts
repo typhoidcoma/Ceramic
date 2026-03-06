@@ -25,7 +25,7 @@ export function seeded(seed: number): () => number {
   let v = seed >>> 0;
   return () => {
     v = hashMix(v + 0x9e3779b9);
-    return (v & 0xffffffff) / 0x100000000;
+    return (v >>> 0) / 0x100000000;
   };
 }
 

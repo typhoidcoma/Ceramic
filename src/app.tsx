@@ -2,7 +2,6 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { initWebGPU } from "./gpu/context";
 import { Renderer } from "./gpu/renderer";
 import { generateGrammar } from "./logogram/grammar";
-import { rasterizeLogogram } from "./logogram/rasterize";
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -33,12 +32,11 @@ export function App() {
         renderer = new Renderer(gpu);
         rendererRef.current = renderer;
 
-        // Generate initial logogram
+        // Generate initial logogram on GPU
         const grammar = generateGrammar("human");
-        const imageData = rasterizeLogogram(grammar);
-        renderer.uploadLogogram(imageData, "A");
-        renderer.uploadLogogram(imageData, "B"); // both same initially
-        renderer.startReveal();
+        renderer.generateLogogram(grammar, "A");
+        renderer.generateLogogram(grammar, "B");
+        renderer.revealA();
         renderer.start();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to initialize WebGPU");
@@ -69,16 +67,15 @@ export function App() {
     if (!renderer || !newWord.trim()) return;
 
     const grammar = generateGrammar(newWord.trim());
-    const imageData = rasterizeLogogram(grammar);
 
     if (isFirstLogogram.current) {
-      renderer.uploadLogogram(imageData, "A");
-      renderer.uploadLogogram(imageData, "B");
-      renderer.startReveal();
+      renderer.generateLogogram(grammar, "A");
+      renderer.generateLogogram(grammar, "B");
+      renderer.revealA();
       isFirstLogogram.current = false;
     } else {
-      renderer.uploadLogogram(imageData, "B");
-      renderer.startTransition();
+      renderer.generateLogogram(grammar, "B");
+      renderer.transitionToB();
     }
   }, []);
 
