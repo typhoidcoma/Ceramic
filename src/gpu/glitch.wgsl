@@ -11,6 +11,10 @@ struct Uniforms {
   decay: f32,
   blendToClean: f32,
   pixelSort: f32,
+  blockRandom: f32,
+  blockStretch: f32,
+  _pad0: f32,
+  _pad1: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -68,20 +72,34 @@ fn fsBlock(in: VsOut) -> @location(0) vec4f {
   let uv = in.uv;
   let _keep = textureSample(auxTex, samp, uv).r * 0.0 + u.time * 0.0;
   let size = max(1.0, u.blockSize);
-  let grid = vec2f(u.width, u.height) / size;
+  let stretch = max(0.25, u.blockStretch);
+
+  // Stretch skews block aspect ratio, randomSize varies block dimensions per cell.
+  let baseCell = vec2f(size * stretch, size / stretch);
+  let coarseGrid = vec2f(u.width, u.height) / max(baseCell, vec2f(1.0));
+  let coarseId = floor(uv * coarseGrid);
+  let rand = hash12(coarseId + vec2f(floor(u.time * 2.0), floor(u.time * 3.0)));
+  let randScale = mix(1.0, 0.35 + rand * 1.65, clamp(u.blockRandom, 0.0, 1.0));
+  let cell = max(baseCell * randScale, vec2f(1.0));
+
+  let grid = vec2f(u.width, u.height) / cell;
   let blockUv = floor(uv * grid) / grid;
   let jitter = (hash22(blockUv * 40.0 + vec2f(u.time * 0.7, u.time * 0.3)) * 0.0015) * u.glitchBurst;
 
   let baseUv = clamp(blockUv + jitter, vec2f(0.001), vec2f(0.999));
-  let baseColor = textureSample(srcTex, samp, baseUv).rgb;
+  let baseSample = textureSample(srcTex, samp, baseUv);
+  let baseColor = baseSample.rgb;
   let lum = luma(baseColor);
   let rowId = floor(baseUv.y * u.height / size);
-  let dir = select(-1.0, 1.0, fract(rowId * 0.618 + floor(u.time * 2.0) * 0.13) > 0.5);
-  let sortShift = (lum - 0.5) * 0.18 * u.pixelSort * dir;
+  let baseDir = select(-1.0, 1.0, fract(rowId * 0.618 + floor(u.time * 2.0) * 0.13) > 0.5);
+  let controlDir = select(1.0, sign(u.pixelSort), abs(u.pixelSort) > 1e-5);
+  let dir = baseDir * controlDir;
+  let sortShift = (lum - 0.5) * 0.18 * abs(u.pixelSort) * dir;
   let sortedUv = clamp(baseUv + vec2f(sortShift, 0.0), vec2f(0.001), vec2f(0.999));
-  let sortedColor = textureSample(srcTex, samp, sortedUv).rgb;
+  let sortedSample = textureSample(srcTex, samp, sortedUv);
+  let sortedColor = sortedSample.rgb;
   let outColor = mix(baseColor, sortedColor, u.pixelSort);
-  return vec4f(outColor, 1.0) + vec4f(_keep);
+  return vec4f(outColor, baseSample.a) + vec4f(_keep);
 }
 
 @fragment
@@ -104,7 +122,7 @@ fn fsFeedback(in: VsOut) -> @location(0) vec4f {
 
   let carry = mix(curr, prev, clamp(u.feedbackAmount, 0.0, 0.99));
   let decay = 1.0 - clamp(u.decay, 0.0, 0.5);
-  return vec4f(carry.rgb * decay, 1.0);
+  return vec4f(carry.rgb * decay, carry.a);
 }
 
 @fragment
@@ -122,10 +140,11 @@ fn fsRgb(in: VsOut) -> @location(0) vec4f {
   let g = textureSample(srcTex, samp, baseUv).g;
   let b = textureSample(srcTex, samp, clamp(baseUv - vec2f(split, 0.0), vec2f(0.001), vec2f(0.999))).b;
 
-  let clean = textureSample(auxTex, samp, uv).rgb;
+  let cleanSample = textureSample(auxTex, samp, uv);
+  let clean = cleanSample.rgb;
   let damaged = vec3f(r, g, b);
   let outColor = mix(damaged, clean, clamp(u.blendToClean, 0.0, 1.0));
-  return vec4f(outColor, 1.0);
+  return vec4f(outColor, cleanSample.a);
 }
 
 @fragment
@@ -134,6 +153,12 @@ fn fsCopy(in: VsOut) -> @location(0) vec4f {
   let _keep = textureSample(auxTex, samp, uv).r * 0.0 + u.time * 0.0;
   return textureSample(srcTex, samp, uv) + vec4f(_keep);
 }
+
+
+
+
+
+
 
 
 

@@ -1,57 +1,55 @@
 # Ceramic Datamosh Lab
 
-A browser-based WebGPU shader playground for datamosh and glitch visuals.
+Ceramic is a WebGPU datamosh and glitch playground with a true reorderable effect stack, advanced per-layer controls, and media-backed preview.
 
-## What It Does
+## Features
 
-- Realtime multi-pass datamosh/glitch rendering
-- Image background input
-- Video background input with looping playback
-- Large effect control surface (glitch, distortion, analog, stylization, masking, utility)
-- Built-in slider self-test mode to sweep all controls
+- Reorderable effect layer stack with per-layer:
+  - amount
+  - blend
+  - bypass/enable
+  - solo
+  - duplicate
+  - reset/remove
+- Datamosh core pass chain (Data-Mosh, Feedback, Soft/Hard Glitch, Pixel Sort, Decimate)
+- Style/composition stack layers (distortion, retro, stylization, procedural, image, masking, utility)
+- Background source model:
+  - solid color
+  - image
+  - looping video
+- Solid underlay color and opacity composited under masked/transparent output
+- Presets, randomize, and self-test controls
 
-## Tech Stack
-
-- Vite
-- React + TypeScript
-- Raw WebGPU + WGSL
-
-## Run Locally
-
-1. Install dependencies:
+## Run
 
 ```bash
 npm install
-```
-
-2. Start dev server:
-
-```bash
 npm run dev
 ```
 
-3. Type-check:
+Type-check:
 
 ```bash
 npm run typecheck
 ```
 
-4. Build production bundle:
+Build:
 
 ```bash
 npm run build
 ```
 
-## Usage
-
-1. Open the app and click `Load Image` or `Load Video`.
-2. Use the grouped sliders to shape the effect stack.
-3. Use presets for quick looks.
-4. Use `Start Self-Test` to auto-sweep controls and verify every effect path.
-5. Click `Clear Media` to reset the source.
-
 ## Notes
 
-- WebGPU-capable browser required.
-- Video playback is muted and looped by default for shader preview workflows.
-- `0` on sliders is intended to be neutral where applicable.
+- Requires a WebGPU-capable browser.
+- Video files are loaded locally, played muted, and looped.
+- Neutral-zero behavior is enforced: amount sliders at `0` are intended to be visually neutral.
+
+## Reference Attribution
+
+This implementation is inspired by publicly available shader and effect references:
+
+- [Mosh-Pro effect taxonomy and stacking model](https://moshpro.app/?ref=uiuxshowcase.com)
+- [KinoDatamosh](https://github.com/keijiro/KinoDatamosh)
+- [KinoGlitch](https://github.com/keijiro/KinoGlitch)
+- [GODPUS datamosh GLSL](https://github.com/GODPUS/shaders/blob/master/datamosh/glsl/datamosh.glsl)

@@ -10,18 +10,22 @@ export type GlitchParams = {
   decay: number;
   blendToClean: number;
   pixelSort: number;
+  blockRandom: number;
+  blockStretch: number;
 };
 
 export const DEFAULT_GLITCH_PARAMS: GlitchParams = {
-  warpStrength: 0.8,
-  blockSize: 18,
-  feedbackAmount: 0.86,
-  feedbackDisplace: 0.045,
-  rgbSplit: 7,
-  glitchBurst: 0.7,
-  decay: 0.04,
-  blendToClean: 0.15,
-  pixelSort: 0.0,
+  warpStrength: 0,
+  blockSize: 1,
+  feedbackAmount: 0,
+  feedbackDisplace: 0,
+  rgbSplit: 0,
+  glitchBurst: 0,
+  decay: 0,
+  blendToClean: 0,
+  pixelSort: 0,
+  blockRandom: 0,
+  blockStretch: 1,
 };
 
 export class GlitchPipeline {
@@ -63,7 +67,7 @@ export class GlitchPipeline {
     });
 
     this.uniformBuf = this.device.createBuffer({
-      size: 48,
+      size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -137,7 +141,7 @@ export class GlitchPipeline {
 
   private writeUniforms(time: number) {
     const p = this.params;
-    const data = new Float32Array(12);
+    const data = new Float32Array(16);
     data[0] = time;
     data[1] = this.width;
     data[2] = this.height;
@@ -150,6 +154,10 @@ export class GlitchPipeline {
     data[9] = p.decay;
     data[10] = p.blendToClean;
     data[11] = p.pixelSort;
+    data[12] = p.blockRandom;
+    data[13] = p.blockStretch;
+    data[14] = 0;
+    data[15] = 0;
     this.device.queue.writeBuffer(this.uniformBuf, 0, data);
   }
 
@@ -220,6 +228,11 @@ export class GlitchPipeline {
     this.device.queue.submit([encoder.finish()]);
   }
 }
+
+
+
+
+
 
 
 

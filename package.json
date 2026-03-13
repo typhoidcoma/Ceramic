@@ -5,9 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "predev": "npm run check:encoding",
     "build": "tsc --noEmit && vite build",
+    "prebuild": "npm run check:encoding",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "pretypecheck": "npm run check:encoding",
+    "typecheck": "tsc --noEmit",
+    "check:encoding": "node scripts/check-encoding.mjs",
+    "fix:encoding": "node scripts/fix-encoding.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

@@ -1,38 +1,45 @@
 # Architecture
 
-Ceramic is a client-side WebGPU datamosh viewer built as a React + TypeScript app.
+Ceramic is a client-side WebGPU datamosh viewer/playground built with React + TypeScript.
 
 ## Runtime Flow
 
-1. Media source is loaded from UI (`image` or `video`).
-2. Source pass renders media into a square-fit background texture.
-3. Glitch pipeline applies multi-pass datamosh transforms:
+1. UI builds `BackgroundSource`, `EffectLayer[]`, and `GlobalOptions`.
+2. Source pass renders square-fit media (or solid mode) into an RGBA source texture.
+3. Datamosh core pipeline applies dedicated glitch passes:
    - warp
-   - macroblock/decimate
+   - macroblock
    - temporal feedback
-   - RGB/channel damage
-4. Style pipeline applies post stylization/masking passes.
-5. Final composited frame is presented to the canvas each animation frame.
+   - RGB damage
+4. Reorderable effect stack pipeline runs non-datamosh layers in user-defined order.
+5. Final composite pass renders stack output over configured underlay color.
 
 ## Core Modules
 
 - `src/app.tsx`
-  - UI controls, presets, media loading, self-test, parameter mapping.
+  - stack UI, media loading, layer control, presets, global controls.
+- `src/gpu/effectsRegistry.ts`
+  - effect definitions, param metadata, public runtime types.
 - `src/gpu/playgroundRenderer.ts`
-  - WebGPU frame orchestration, source texture updates, render loop.
+  - frame orchestration and renderer-facing API.
 - `src/gpu/glitchPipeline.ts` + `src/gpu/glitch.wgsl`
-  - Datamosh/glitch pass chain and uniforms.
-- `src/gpu/stylePipeline.ts` + `src/gpu/style.wgsl`
-  - Stylization, masking, and utility effects.
+  - datamosh core pass chain.
+- `src/gpu/effectStackPipeline.ts` + `src/gpu/effectStack.wgsl`
+  - per-layer style/composition effect execution.
 - `src/gpu/playgroundSource.wgsl`
-  - Source fit/composition shader.
+  - source fit/alpha generation.
+- `src/gpu/compose.wgsl`
+  - underlay compositing.
 
-## Data Model
+## Public Renderer Interface
 
-The app is stateless beyond current UI parameters and loaded media source. There is no backend dependency in the viewer runtime.
+- `setBackgroundSource(background: BackgroundSource)`
+- `setGlitchParams(params: Partial<GlitchParams>)`
+- `setEffectStack(layers: EffectLayer[])`
+- `setGlobalOptions(options: GlobalOptions)`
 
 ## Performance Notes
 
-- Fullscreen quad passes only.
-- Persistent textures for feedback and pass chaining.
-- Video frames are copied through an internal canvas before GPU upload for browser compatibility.
+- Fullscreen quad-only render passes.
+- Ping-pong textures in stack pipeline.
+- Video copied via internal canvas before texture upload for browser compatibility.
