@@ -1,24 +1,40 @@
+:root {
+  --bg-0: #081123;
+  --bg-1: #12324a;
+  --panel: rgba(9, 17, 28, 0.8);
+  --panel-border: rgba(123, 211, 255, 0.22);
+  --text: #e7f7ff;
+  --muted: #94a8b8;
+  --accent: #61ffcf;
+  --accent-soft: rgba(97, 255, 207, 0.3);
+}
+
 * {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   width: 100%;
   height: 100%;
+  margin: 0;
+}
+
+body {
   overflow: hidden;
-  background: #1a1a1c;
-  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 18% 12%, #264f6d 0%, transparent 42%),
+    radial-gradient(circle at 82% 86%, #4f2f56 0%, transparent 36%),
+    linear-gradient(130deg, var(--bg-0), var(--bg-1));
 }
 
 .app {
   position: relative;
   width: 100%;
   height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .canvas-wrap {
@@ -32,48 +48,155 @@ html, body, #root {
   display: block;
 }
 
-.input-wrap {
+.control-panel {
   position: absolute;
-  bottom: 48px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
+  top: 16px;
+  right: 16px;
+  width: min(430px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 16px;
+  border-radius: 18px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
 }
 
-.input-wrap input {
+.panel-head h1 {
+  margin: 0;
+  font-size: 1.2rem;
+  letter-spacing: 0.02em;
+}
+
+.panel-head p {
+  margin: 4px 0 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.file-input {
+  display: none;
+}
+
+.asset-row,
+.preset-row,
+.button-row {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.asset-row {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.button-row {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.preset-row {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.asset-name {
+  margin: -6px 0 10px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+button {
+  border: 1px solid rgba(255, 255, 255, 0.22);
   background: rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 14px 28px;
-  font-size: 18px;
-  font-family: inherit;
-  color: rgba(255, 255, 255, 0.85);
-  text-align: center;
-  min-width: 280px;
-  outline: none;
-  transition: border-color 0.3s, background 0.3s;
-  letter-spacing: 0.04em;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.2s ease, background 0.2s ease;
 }
 
-.input-wrap input::placeholder {
-  color: rgba(255, 255, 255, 0.25);
+button:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent-soft);
+  background: rgba(97, 255, 207, 0.09);
 }
 
-.input-wrap input:focus {
-  border-color: rgba(255, 255, 255, 0.25);
-  background: rgba(255, 255, 255, 0.09);
+.control-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.control-section h2 {
+  margin: 0 0 10px;
+  font-size: 0.83rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #bde1f3;
+}
+
+.control {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "label value"
+    "slider slider";
+  gap: 6px 12px;
+  margin-bottom: 10px;
+}
+
+.control span {
+  grid-area: label;
+  font-size: 0.84rem;
+  color: #d8e7f5;
+}
+
+.control input {
+  grid-area: slider;
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.control output {
+  grid-area: value;
+  font-size: 0.76rem;
+  color: #8cffde;
+  min-width: 56px;
+  text-align: right;
 }
 
 .error-msg {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 14px;
+  inset: 0;
+  display: grid;
+  place-items: center;
   text-align: center;
-  max-width: 400px;
-  line-height: 1.6;
+  font-size: 0.96rem;
+  color: #f0f6ff;
+  padding: 20px;
 }
+
+@media (max-width: 900px) {
+  .control-panel {
+    right: 10px;
+    left: 10px;
+    width: auto;
+    top: auto;
+    bottom: 10px;
+    max-height: 58vh;
+  }
+
+  .preset-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+
+

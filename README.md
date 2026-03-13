@@ -1,16 +1,22 @@
-# Ceramic
+# Ceramic Datamosh Lab
 
-GPU-first fluid logogram viewer using React, TypeScript, WebGPU, and a local Node + SQLite backend.
+A browser-based WebGPU shader playground for datamosh and glitch visuals.
 
-## Stack
+## What It Does
+
+- Realtime multi-pass datamosh/glitch rendering
+- Image background input
+- Video background input with looping playback
+- Large effect control surface (glitch, distortion, analog, stylization, masking, utility)
+- Built-in slider self-test mode to sweep all controls
+
+## Tech Stack
 
 - Vite
 - React + TypeScript
-- WebGPU (no WebGL fallback)
-- Node + Express
-- SQLite
+- Raw WebGPU + WGSL
 
-## Getting Started
+## Run Locally
 
 1. Install dependencies:
 
@@ -18,66 +24,34 @@ GPU-first fluid logogram viewer using React, TypeScript, WebGPU, and a local Nod
 npm install
 ```
 
-2. Create `.env.local` from `.env.example` and set:
-
-```env
-VITE_API_BASE_URL=http://127.0.0.1:8787
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-4.1-mini
-PORT=8787
-DB_PATH=./data/ceramic.db
-```
-
-3. Run frontend and backend together:
+2. Start dev server:
 
 ```bash
-npm run dev:all
+npm run dev
 ```
 
-4. Build and type-check:
+3. Type-check:
 
 ```bash
 npm run typecheck
+```
+
+4. Build production bundle:
+
+```bash
 npm run build
 ```
 
-## Local API
+## Usage
 
-- `GET /api/health`
-- `GET /api/atoms?limit=5000`
-- `GET /api/dictionary?language=heptapod_b_v1&limit=200`
-- `POST /api/messages/generate`
-- `GET /api/events` (SSE)
-- `GET /api/benchmark/references`
-
-## Wolfram Morphology Benchmark
-
-1. Import and cache Wolfram `ScriptLogoJpegs` locally:
-
-```bash
-npm run benchmark:import:wolfram
-```
-
-2. This writes:
-- `data/reference/arrival-script-logo-jpegs/*`
-- `data/reference/manifest.json`
-
-3. Start app with `npm run dev:all`. Diagnostics will show benchmark status:
-- `bench on/off`
-- `benchScore`
-- `benchPass`
-- `fpsGuard`
-
-Benchmark pass requires morphology threshold pass and strict FPS guardrail (`>= 60 FPS` over rolling window).
+1. Open the app and click `Load Image` or `Load Video`.
+2. Use the grouped sliders to shape the effect stack.
+3. Use presets for quick looks.
+4. Use `Start Self-Test` to auto-sweep controls and verify every effect path.
+5. Click `Clear Media` to reset the source.
 
 ## Notes
 
-- Database file is local (`DB_PATH`), default `./data/ceramic.db`.
-- Dictionary is seeded automatically on server startup (100 entries) if empty.
-- OpenAI calls happen server-side only.
-
-## Privacy and Repo Hygiene
-
-- No keys or tokens are committed.
-- Local environment files are gitignored.
-- Keep secrets only in `.env.local`.
+- WebGPU-capable browser required.
+- Video playback is muted and looped by default for shader preview workflows.
+- `0` on sliders is intended to be neutral where applicable.
